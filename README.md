@@ -1,1 +1,1 @@
-# Algebraic-2G
+# GPU-Precond

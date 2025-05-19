@@ -40,7 +40,7 @@ void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
 int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
                 std::vector<int> &col_index, std::vector<double> &values) {
   // 1. Parse command line options.
-  std::string mesh_file = "../../../data/rect.msh";
+  std::string mesh_file = "../../data/rect.msh";
   int order = 1;
 
   // OptionsParser args(argc, argv);
@@ -113,7 +113,7 @@ int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
 
 int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
             std::vector<int> &col_index, std::vector<double> &values) {
-  std::ifstream in("../../../data/A.bin");
+  std::ifstream in("../../data/A.bin");
   if (!in) {
     std::cerr << "Error: Could not open A.bin for reading!" << std::endl;
     return 1;

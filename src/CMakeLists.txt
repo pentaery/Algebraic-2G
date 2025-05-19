@@ -53,19 +53,19 @@ else()
    find_package(mfem REQUIRED NAMES MFEM)
 endif()
 
-# --- 检查 MFEM 是否支持 CUDA ---
-if (NOT MFEM_USE_CUDA)
-   message(WARNING "MFEM was not compiled with CUDA support! Rebuild MFEM with -D MFEM_USE_CUDA=ON")
-else()
-   message(STATUS "MFEM CUDA support enabled.")
-endif()
+# # --- 检查 MFEM 是否支持 CUDA ---
+# if (NOT MFEM_USE_CUDA)
+#    message(WARNING "MFEM was not compiled with CUDA support! Rebuild MFEM with -D MFEM_USE_CUDA=ON")
+# else()
+#    message(STATUS "MFEM CUDA support enabled.")
+# endif()
 
-# --- 设置 CUDA 相关编译选项 ---
-if (MFEM_USE_CUDA)
-   # 确保 CUDA 相关的头文件和库被包含
-   include_directories(${CUDA_INCLUDE_DIRS})
-   list(APPEND MFEM_LIBRARIES ${CUDA_LIBRARIES})
-endif()
+# # --- 设置 CUDA 相关编译选项 ---
+# if (MFEM_USE_CUDA)
+#    # 确保 CUDA 相关的头文件和库被包含
+#    include_directories(${CUDA_INCLUDE_DIRS})
+#    list(APPEND MFEM_LIBRARIES ${CUDA_LIBRARIES})
+# endif()
 
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set

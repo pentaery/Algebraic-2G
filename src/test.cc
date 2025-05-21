@@ -1,6 +1,7 @@
 #include "matCPU.hh"
 
 #include <iomanip>
+#include <iostream>
 #include <metis.h>
 #include <petscdevicetypes.h>
 #include <petscerror.h>
@@ -29,7 +30,18 @@ int main(int argc, char *argv[]) {
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &nprocs);
 
+  PetscInt *cluster_sizes = NULL;
+  PetscCall(PetscMalloc1(nprocs, &cluster_sizes));
+
+  PetscScalar *arr_B;
+  const PetscInt *row_B;
+  const PetscInt *col_B;
+
   if (rank == 0) {
+
+    for (int i = 0; i < nprocs; ++i) {
+      cluster_sizes[i] = 0;
+    }
 
     Mat A, B;
 
@@ -63,16 +75,22 @@ int main(int argc, char *argv[]) {
 
     IS is;
     std::vector<PetscInt> idx(nrows, 0);
-    std::vector<PetscInt> cluster_sizes(nparts, 0);
+    // std::vector<PetscInt> cluster_sizes(nprocs, 0);
     for (int i = 0; i < nrows; ++i) {
       idx[i] = cluster_sizes[part[i]];
       cluster_sizes[part[i]]++;
     }
+
     for (int i = 0; i < nrows; ++i) {
       for (int j = 0; j < part[i]; ++j) {
         idx[i] += cluster_sizes[j];
       }
     }
+
+    // 打印每个cluster的大小
+    //  for (int i = 0; i < nprocs; ++i) {
+    //    std::cout << "Cluster " << i << ": " << cluster_sizes[i] << std::endl;
+    //  }
 
     // for (int i = 0; i < nrows; ++i) {
     //   std::cout << "Row " << i << " is in cluster " << part[i]
@@ -84,13 +102,13 @@ int main(int argc, char *argv[]) {
     // PetscCall(ISView(is, PETSC_VIEWER_STDOUT_SELF));
     PetscCall(MatPermute(A, is, is, &B));
 
-    PetscScalar *arr_B;
-    const PetscInt *row_B;
-    const PetscInt *col_B;
     PetscMemType mtype;
     PetscCall(MatSeqAIJGetCSRAndMemType(B, &row_B, &col_B, &arr_B, &mtype));
 
-
+    // for (int i = 0; i < nnz; ++i) {
+    //   std::cout << col_B[i] << " ";
+    // }
+    // std::cout << std::endl << std::endl << std::endl;
 
     // 打印每个cluster控制的行索引
     // std::vector<std::vector<int>> cluster_indices(nparts);
@@ -122,6 +140,116 @@ int main(int argc, char *argv[]) {
     }
     out.close();
   }
+
+  PetscCall(MPI_Bcast(cluster_sizes, nprocs, MPI_INT, 0, comm));
+
+  PetscInt *row_offset = NULL;
+  PetscCall(PetscMalloc1(nprocs, &row_offset));
+  row_offset[0] = 0;
+  for (int i = 1; i < nprocs; ++i) {
+    row_offset[i] = row_offset[i - 1] + cluster_sizes[i - 1];
+  }
+  PetscInt total_rows = row_offset[nprocs - 1] + cluster_sizes[nprocs - 1];
+
+  PetscInt *sendcounts_rowptr, *displs_rowptr, *sendcounts_nnz, *displs_nnz;
+  PetscCall(PetscMalloc1(nprocs, &sendcounts_rowptr));
+  PetscCall(PetscMalloc1(nprocs, &displs_rowptr));
+  PetscCall(PetscMalloc1(nprocs, &sendcounts_nnz));
+  PetscCall(PetscMalloc1(nprocs, &displs_nnz));
+
+  // 计算每个进程的偏移量
+  if (rank == 0) {
+    for (int i = 0; i < nprocs; ++i) {
+      sendcounts_rowptr[i] = cluster_sizes[i] + 1;
+      displs_rowptr[i] = row_offset[i];
+      sendcounts_nnz[i] =
+          row_B[row_offset[i] + cluster_sizes[i]] - row_B[row_offset[i]];
+      displs_nnz[i] = row_B[row_offset[i]];
+    }
+  }
+
+  PetscInt local_nnz;
+  PetscCall(MPI_Scatter(sendcounts_nnz, 1, MPIU_INT, &local_nnz, 1, MPIU_INT, 0,
+                        PETSC_COMM_WORLD));
+
+  PetscInt local_rows = cluster_sizes[rank];
+
+  // PetscCall(PetscPrintf(PETSC_COMM_SELF, "rank %d, local_rows %d\n", rank,
+  //               local_rows));
+
+  PetscInt *local_row_ptr, *local_col_index;
+  PetscScalar *local_values;
+  PetscCall(PetscMalloc1(local_rows + 1, &local_row_ptr));
+  PetscCall(PetscMalloc1(local_nnz, &local_col_index));
+  PetscCall(PetscMalloc1(local_nnz, &local_values));
+
+  PetscCall(MPI_Scatterv(row_B, sendcounts_rowptr, displs_rowptr, MPIU_INT,
+                         local_row_ptr, local_rows + 1, MPIU_INT, 0,
+                         PETSC_COMM_WORLD));
+  PetscCall(MPI_Scatterv(col_B, sendcounts_nnz, displs_nnz, MPIU_INT,
+                         local_col_index, local_nnz, MPIU_INT, 0,
+                         PETSC_COMM_WORLD));
+  PetscCall(MPI_Scatterv(arr_B, sendcounts_nnz, displs_nnz, MPIU_SCALAR,
+                         local_values, local_nnz, MPIU_SCALAR, 0,
+                         PETSC_COMM_WORLD));
+
+  for (int i = local_rows; i >= 0; --i) {
+    local_row_ptr[i] -= local_row_ptr[0];
+  }
+
+
+  Mat A;
+
+  PetscCall(MatCreateMPIAIJWithArrays(
+      PETSC_COMM_WORLD, local_rows, local_rows, PETSC_DECIDE, PETSC_DECIDE, local_row_ptr, local_col_index,
+      local_values, &A));
+
+  PetscCall(MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY));
+
+  Vec b;
+  PetscCall(MatCreateVecs(A, &b, NULL));
+  PetscCall(MatGetDiagonal(A, b));
+
+  KSP ksp;
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ksp));
+  PetscCall(KSPSetOperators(ksp, A, A));
+  PetscCall(KSPSetType(ksp, KSPCG));
+  PetscCall(KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED));
+  PetscCall(
+      KSPSetTolerances(ksp, 1e-6, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT));
+  PetscCall(KSPSetFromOptions(ksp));
+
+  PC pc;
+  PetscCall(KSPGetPC(ksp, &pc));
+  
+  PetscCall(PCSetType(pc, PCGAMG));
+
+  Vec x;
+  PetscCall(VecDuplicate(b, &x));
+  PetscCall(VecSet(x, 0.0));
+  PetscCall(KSPSolve(ksp, b, x));
+  KSPConvergedReason reason;
+  PetscCall(KSPGetConvergedReason(ksp, &reason));
+  int num;
+  PetscCall(KSPGetIterationNumber(ksp, &num));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "Number of iterations: %d\n", num));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "Converged reason: %d\n", reason));
+  
+
+
+
+
+
+
+  // if (rank == 7) {
+  //   for (int i = 0; i < local_nnz; ++i) {
+  //     std::cout << local_col_index[i] << " ";
+  //   }
+  //   std::cout << std::endl;
+  // }
 
   // // int cluster_sizes[nparts];
   // // for (int i = 0; i < nparts; i++) {

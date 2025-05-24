@@ -228,14 +228,25 @@ int main(int argc, char *argv[]) {
   if (using2G) {
     Mat Ai;
     PetscCall(MatGetDiagonalBlock(A, &Ai));
+    // PetscCall(MatAssemblyBegin(Ai, MAT_FINAL_ASSEMBLY));
+    // PetscCall(MatAssemblyEnd(Ai, MAT_FINAL_ASSEMBLY));
+    Vec rowsum;
+    PetscCall(MatCreateVecs(Ai, &rowsum, NULL));
+    PetscCall(VecSetFromOptions(rowsum));
+    PetscCall(MatGetRowSum(Ai, rowsum));
+    Vec diagonal;
+    PetscCall(MatCreateVecs(Ai, &diagonal, NULL));
+    PetscCall(VecSetFromOptions(diagonal));
+    PetscCall(MatGetDiagonal(Ai, diagonal));
+    PetscCall(VecAXPY(diagonal, -1.0, rowsum));
+    PetscCall(MatDiagonalSet(Ai, diagonal, INSERT_VALUES));
     PetscCall(MatAssemblyBegin(Ai, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(Ai, MAT_FINAL_ASSEMBLY));
     // PetscCall(MatSetOptions(Ai, MAT_SYMMETRIC, PETSC_TRUE));
 
     Mat Si;
-    PetscCall(MatCreateConstantDiagonal(PETSC_COMM_SELF, local_rows, local_rows,
-                                        PETSC_DETERMINE, PETSC_DETERMINE, 1.0,
-                                        &Si));
+    PetscCall(MatCreateConstantDiagonal(PETSC_COMM_SELF, local_rows, local_rows, PETSC_DETERMINE, PETSC_DETERMINE, 1.0, &Si));
+    // PetscCall(MatCreateDiagonal(diagonal, &Si));
     PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
     // PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
@@ -278,9 +289,10 @@ int main(int argc, char *argv[]) {
     }
 
     for (int j = 0; j < eigennum; ++j) {
-      PetscInt idxn = 4 * rank + j;
+      PetscInt idxn = eigennum * rank + j;
       PetscCall(EPSGetEigenpair(eps, j, &eig_val, NULL, eig_vec, NULL));
-      // std::cout << "Eigenvalue: " << eig_val << " ";
+      PetscCall(PetscPrintf(PETSC_COMM_SELF, "Rank %d, number %d, eigval %.18f\n",
+                            rank, j, eig_val));
       PetscCall(VecGetArray(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
@@ -288,6 +300,11 @@ int main(int argc, char *argv[]) {
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
+
+    PetscCall(MatDestroy(&Ai));
+    PetscCall(MatDestroy(&Si));
+    PetscCall(VecDestroy(&eig_vec));
+    // PetscCall(EPSDestroy(&eps));
 
     KSP kspCoarse, kspSmoother;
     PC pcCoarse, pcSmoother;

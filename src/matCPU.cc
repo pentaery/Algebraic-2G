@@ -37,79 +37,79 @@ void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
   }
 }
 
-int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
-                std::vector<int> &col_index, std::vector<double> &values) {
-  // 1. Parse command line options.
-  std::string mesh_file = "../../data/rect.msh";
-  int order = 1;
+// int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
+//                 std::vector<int> &col_index, std::vector<double> &values) {
+//   // 1. Parse command line options.
+//   std::string mesh_file = "../../data/rect.msh";
+//   int order = 1;
 
-  // OptionsParser args(argc, argv);
-  // args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-  // args.AddOption(&order, "-o", "--order", "Finite element polynomial
-  // degree"); args.ParseCheck();
+//   // OptionsParser args(argc, argv);
+//   // args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+//   // args.AddOption(&order, "-o", "--order", "Finite element polynomial
+//   // degree"); args.ParseCheck();
 
-  // 2. Read the mesh from the given mesh file, and refine once uniformly.
-  mfem::Mesh mesh(mesh_file);
-  // mesh.UniformRefinement();
+//   // 2. Read the mesh from the given mesh file, and refine once uniformly.
+//   mfem::Mesh mesh(mesh_file);
+//   // mesh.UniformRefinement();
 
-  // 3. Define a finite element space on the mesh. Here we use H1 continuous
-  //    high-order Lagrange finite elements of the given order.
-  mfem::H1_FECollection fec(order, mesh.Dimension());
-  mfem::FiniteElementSpace fespace(&mesh, &fec);
-  std::cout << "Number of unknowns: " << fespace.GetTrueVSize() << std::endl;
+//   // 3. Define a finite element space on the mesh. Here we use H1 continuous
+//   //    high-order Lagrange finite elements of the given order.
+//   mfem::H1_FECollection fec(order, mesh.Dimension());
+//   mfem::FiniteElementSpace fespace(&mesh, &fec);
+//   std::cout << "Number of unknowns: " << fespace.GetTrueVSize() << std::endl;
 
-  // 4. For Neumann conditions, we don't need to get boundary DOFs
-  //    Array<int> boundary_dofs;
-  //    fespace.GetBoundaryTrueDofs(boundary_dofs);
+//   // 4. For Neumann conditions, we don't need to get boundary DOFs
+//   //    Array<int> boundary_dofs;
+//   //    fespace.GetBoundaryTrueDofs(boundary_dofs);
 
-  // 5. Define the solution x as a finite element grid function in fespace.
-  mfem::GridFunction x(&fespace);
-  x = 0.0;
+//   // 5. Define the solution x as a finite element grid function in fespace.
+//   mfem::GridFunction x(&fespace);
+//   x = 0.0;
 
-  // 6. Set up the linear form b(.) corresponding to the right-hand side.
-  mfem::ConstantCoefficient one(1.0);
-  mfem::LinearForm b(&fespace);
-  b.AddDomainIntegrator(new mfem::DomainLFIntegrator(one));
+//   // 6. Set up the linear form b(.) corresponding to the right-hand side.
+//   mfem::ConstantCoefficient one(1.0);
+//   mfem::LinearForm b(&fespace);
+//   b.AddDomainIntegrator(new mfem::DomainLFIntegrator(one));
 
-  // Add Neumann boundary condition (if needed)
-  // ConstantCoefficient neumann_bc(0.0); // Zero flux for this example
-  // b.AddBoundaryIntegrator(new BoundaryLFIntegrator(neumann_bc));
+//   // Add Neumann boundary condition (if needed)
+//   // ConstantCoefficient neumann_bc(0.0); // Zero flux for this example
+//   // b.AddBoundaryIntegrator(new BoundaryLFIntegrator(neumann_bc));
 
-  b.Assemble();
+//   b.Assemble();
 
-  // 7. Set up the bilinear form a(.,.) corresponding to the -Delta operator.
-  mfem::BilinearForm a(&fespace);
-  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
-  a.Assemble();
+//   // 7. Set up the bilinear form a(.,.) corresponding to the -Delta operator.
+//   mfem::BilinearForm a(&fespace);
+//   a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+//   a.Assemble();
 
-  // 8. Form the linear system A X = B. For Neumann problem, we don't eliminate
-  // boundary conditions
-  mfem::SparseMatrix A;
-  mfem::Vector B, X;
+//   // 8. Form the linear system A X = B. For Neumann problem, we don't eliminate
+//   // boundary conditions
+//   mfem::SparseMatrix A;
+//   mfem::Vector B, X;
 
-  // For pure Neumann problem, the matrix is singular - we need to fix one DOF
-  // Here we fix the first DOF to zero (arbitrary choice)
-  mfem::Array<int> ess_tdof_list(1);
-  ess_tdof_list[0] = 0; // Fix first DOF to make system non-singular
+//   // For pure Neumann problem, the matrix is singular - we need to fix one DOF
+//   // Here we fix the first DOF to zero (arbitrary choice)
+//   mfem::Array<int> ess_tdof_list(1);
+//   ess_tdof_list[0] = 0; // Fix first DOF to make system non-singular
 
-  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+//   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  // Get CSR components
-  const int *i = A.GetI();            // row pointers
-  const int *j = A.GetJ();            // column indices
-  const double *a_data = A.GetData(); // values
-  *nnz = A.NumNonZeroElems();         // number of non-zero elements
-  *nrows = A.Height();
-  row_ptr.resize(*nrows + 1);
-  col_index.resize(*nnz);
-  values.resize(*nnz);
-  std::copy(i, i + *nrows + 1, row_ptr.begin());
-  std::copy(j, j + *nnz, col_index.begin());
-  std::copy(a_data, a_data + *nnz, values.begin());
+//   // Get CSR components
+//   const int *i = A.GetI();            // row pointers
+//   const int *j = A.GetJ();            // column indices
+//   const double *a_data = A.GetData(); // values
+//   *nnz = A.NumNonZeroElems();         // number of non-zero elements
+//   *nrows = A.Height();
+//   row_ptr.resize(*nrows + 1);
+//   col_index.resize(*nnz);
+//   values.resize(*nnz);
+//   std::copy(i, i + *nrows + 1, row_ptr.begin());
+//   std::copy(j, j + *nnz, col_index.begin());
+//   std::copy(a_data, a_data + *nnz, values.begin());
 
-  sortCSRRows(*nrows, *nnz, row_ptr.data(), col_index.data(), values.data());
-  return 0;
-}
+//   sortCSRRows(*nrows, *nnz, row_ptr.data(), col_index.data(), values.data());
+//   return 0;
+// }
 
 int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
             std::vector<int> &col_index, std::vector<double> &values) {

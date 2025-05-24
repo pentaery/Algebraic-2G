@@ -1,4 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
-project(GPU_Precond CXX CUDA)
+project(GPU_Precond CXX)
 # find_package(CUDAToolkit)
 add_subdirectory(src)

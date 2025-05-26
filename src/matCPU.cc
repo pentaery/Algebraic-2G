@@ -1,8 +1,11 @@
 #include "matCPU.hh"
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <petscerror.h>
 #include <petscmat.h>
+
+#define DIM 3
 
 void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
                  double *csrVal) {
@@ -82,12 +85,14 @@ void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
 //   a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
 //   a.Assemble();
 
-//   // 8. Form the linear system A X = B. For Neumann problem, we don't eliminate
+//   // 8. Form the linear system A X = B. For Neumann problem, we don't
+//   eliminate
 //   // boundary conditions
 //   mfem::SparseMatrix A;
 //   mfem::Vector B, X;
 
-//   // For pure Neumann problem, the matrix is singular - we need to fix one DOF
+//   // For pure Neumann problem, the matrix is singular - we need to fix one
+//   DOF
 //   // Here we fix the first DOF to zero (arbitrary choice)
 //   mfem::Array<int> ess_tdof_list(1);
 //   ess_tdof_list[0] = 0; // Fix first DOF to make system non-singular
@@ -113,7 +118,7 @@ void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
 
 int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
             std::vector<int> &col_index, std::vector<double> &values) {
-  std::ifstream in("../../data/A.bin");
+  std::ifstream in("../../data/A.txt");
   if (!in) {
     std::cerr << "Error: Could not open A.bin for reading!" << std::endl;
     return 1;
@@ -223,40 +228,3 @@ void matDecompose2LM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   // values.resize(new_nnz);
   // *nnz = new_nnz;
 }
-
-// PetscErrorCode formAUX(std::vector<int> &row_ptr, std::vector<int>
-// &col_index,
-//                        std::vector<T> &values, int nrows, int nnz) {
-//   PetscFunctionBegin;
-
-//   Mat A;
-//   PetscCall(MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, nrows,
-//   row_ptr.data(), col_index.data(), values.data(), &A));
-
-//   PetscCall(MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY));
-//   PetscCall(MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY));
-
-//   PetscCall(MatConvert(A, MATSEQAIJCUSPARSE, MAT_INPLACE_MATRIX, &A));
-
-//   EPS eps;
-//   PetscInt nconv;
-
-//   PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
-//   PetscCall(EPSSetOperators(eps, A, NULL));
-//   PetscCall(EPSSetProblemType(eps, EPS_HEP));
-//   PetscCall(EPSSetDimensions(eps, 4, PETSC_DEFAULT,
-//                              PETSC_DEFAULT));
-//   // ST st;
-//   // PetscCall(EPSGetST(eps, &st));
-//   // PetscCall(STSetType(st, STSHIFT));
-
-//   PetscCall(EPSSetTarget(eps, -1e-5));
-//   PetscCall(EPSSetOptionsPrefix(eps, "epsl2_"));
-//   PetscCall(EPSSetFromOptions(eps));
-//   PetscCall(EPSSolve(eps));
-//   PetscCall(EPSGetConverged(eps, &nconv));
-
-//   PetscCall(MatDestroy(&A));
-
-//   PetscFunctionReturn(0);
-// }

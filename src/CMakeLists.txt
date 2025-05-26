@@ -78,7 +78,7 @@ add_executable(${OUTPUT_NAME} ${SOURCES})
 target_include_directories(${OUTPUT_NAME}
   PRIVATE
   ${PROJECT_SOURCE_DIR}/include
-  /home/pentaery/local/include
+  /home/ET/yjzhou/HPCSoft/METIS/include
 )
 
 
@@ -91,8 +91,8 @@ pkg_search_module(SLEPC REQUIRED IMPORTED_TARGET slepc)
 # add_library(slepc SHARED IMPORTED)
 # set_target_properties(slepc PROPERTIES IMPORTED_LOCATION ${PETSC}/lib/libslepc.so)
 target_link_libraries(${OUTPUT_NAME} PkgConfig::PETSC PkgConfig::SLEPC m)
-target_link_libraries(${OUTPUT_NAME} /home/pentaery/local/lib/libmetis.so)
-target_link_libraries(${OUTPUT_NAME} /home/pentaery/local/lib/libGKlib.a)
+target_link_libraries(${OUTPUT_NAME} /home/ET/yjzhou/HPCSoft/METIS/lib/libmetis.so)
+target_link_libraries(${OUTPUT_NAME} /home/ET/yjzhou/HPCSoft/GKlib/lib/libGKlib.a)
 
 include_directories(${MFEM_INCLUDE_DIRS})
 target_link_libraries(${OUTPUT_NAME} ${MFEM_LIBRARIES})

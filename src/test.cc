@@ -21,6 +21,12 @@
 #define cStar 1.0
 #define scalartype double
 
+PetscErrorCode MyMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *ctx) {
+  PetscPrintf(PETSC_COMM_WORLD, "Iteration %d: True Residual Norm %g\n", n,
+              rnorm);
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
 
   auto start = std::chrono::high_resolution_clock::now();
@@ -60,6 +66,8 @@ int main(int argc, char *argv[]) {
     PetscCall(MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY));
 
+    // PetscCall(MatView(A, PETSC_VIEWER_STDOUT_SELF));
+
     int ncon = 1;
     int objval;
     int options[METIS_NOPTIONS];
@@ -76,32 +84,25 @@ int main(int argc, char *argv[]) {
 
     IS is;
     std::vector<PetscInt> idx(nrows, 0);
-    // std::vector<PetscInt> cluster_sizes(nprocs, 0);
+
+    std::cout << std::endl;
     for (int i = 0; i < nrows; ++i) {
       idx[i] = cluster_sizes[part[i]];
       cluster_sizes[part[i]]++;
     }
-
     for (int i = 0; i < nrows; ++i) {
       for (int j = 0; j < part[i]; ++j) {
         idx[i] += cluster_sizes[j];
       }
     }
 
-    // 打印每个cluster的大小
-    //  for (int i = 0; i < nprocs; ++i) {
-    //    std::cout << "Cluster " << i << ": " << cluster_sizes[i] << std::endl;
-    //  }
-
-    // for (int i = 0; i < nrows; ++i) {
-    //   std::cout << "Row " << i << " is in cluster " << part[i]
-    //             << ", index in cluster: " << idx[i] << std::endl;
-    // }
-
     PetscCall(ISCreateGeneral(PETSC_COMM_SELF, nrows, idx.data(),
                               PETSC_COPY_VALUES, &is));
-    // PetscCall(ISView(is, PETSC_VIEWER_STDOUT_SELF));
-    PetscCall(MatPermute(A, is, is, &B));
+    IS isinvert;
+    PetscCall(ISInvertPermutation(is, nrows, &isinvert));
+
+    PetscCall(MatPermute(A, isinvert, isinvert, &B));
+    // PetscCall(MatView(A, PETSC_VIEWER_STDOUT_SELF));
 
     PetscMemType mtype;
     PetscCall(MatSeqAIJGetCSRAndMemType(B, &row_B, &col_B, &arr_B, &mtype));
@@ -206,7 +207,7 @@ int main(int argc, char *argv[]) {
 
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating matrix! \n"));
 
-  PetscCall(MatShift(C, 0.1));
+  // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
 
   Vec b;
   PetscCall(MatCreateVecs(C, &b, NULL));
@@ -217,7 +218,8 @@ int main(int argc, char *argv[]) {
   PetscCall(KSPSetOperators(ksp, C, C));
   PetscCall(KSPSetType(ksp, KSPCG));
   PetscCall(KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED));
-  PetscCall(KSPSetTolerances(ksp, 1e-6, PETSC_DEFAULT, PETSC_DEFAULT, 2));
+  PetscCall(
+      KSPSetTolerances(ksp, 1e-6, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT));
   PetscCall(KSPSetFromOptions(ksp));
 
   PetscBool using2G = PETSC_TRUE;
@@ -233,6 +235,7 @@ int main(int argc, char *argv[]) {
     PetscCall(MatCreateVecs(Ai, &rowsum, NULL));
     PetscCall(VecSetFromOptions(rowsum));
     PetscCall(MatGetRowSum(Ai, rowsum));
+    // PetscCall(VecView(rowsum, PETSC_VIEWER_STDOUT_SELF));
     Vec diagonal;
     PetscCall(MatCreateVecs(Ai, &diagonal, NULL));
     PetscCall(MatGetDiagonal(Ai, diagonal));
@@ -241,6 +244,7 @@ int main(int argc, char *argv[]) {
     PetscCall(MatDiagonalSet(Ai, diagonal, INSERT_VALUES));
     PetscCall(MatAssemblyBegin(Ai, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(Ai, MAT_FINAL_ASSEMBLY));
+    PetscCall(MatSetOption(Ai, MAT_SYMMETRIC, PETSC_TRUE));
 
     Vec ones;
     PetscCall(VecCreateSeq(PETSC_COMM_SELF, local_rows, &ones));
@@ -250,14 +254,14 @@ int main(int argc, char *argv[]) {
         MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1, NULL, &Si));
     PetscCall(MatZeroEntries(Si));
     PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
-    // PetscCall(MatCreateConstantDiagonal(PETSC_COMM_SELF, local_rows,
-    // local_rows, PETSC_DETERMINE, PETSC_DETERMINE, 1.0, &Si));
     PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
-    // PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
+    PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
 
-    // if (rank == 5) {
+    // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
+    // if (rank == 2) {
     //   PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+    //   PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
     // }
 
     Mat R;
@@ -279,7 +283,7 @@ int main(int argc, char *argv[]) {
     ST st;
     PetscCall(EPSGetST(eps, &st));
     PetscCall(STSetType(st, STSINVERT));
-    PetscCall(EPSSetTarget(eps, -1e-12));
+    PetscCall(EPSSetTarget(eps, 1e-12));
     PetscCall(EPSSetWhichEigenpairs(eps, EPS_TARGET_REAL));
     PetscCall(EPSSetOptionsPrefix(eps, "epsl1_"));
     PetscCall(EPSSetFromOptions(eps));
@@ -306,6 +310,13 @@ int main(int argc, char *argv[]) {
       PetscCall(VecGetArray(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
+      // if (j == 0 && rank == 0) {
+      //   Vec rhs;
+      //   PetscCall(MatCreateVecs(Ai, NULL, &rhs));
+      //   PetscCall(MatMult(Ai, eig_vec, rhs));
+      //   PetscCall(VecView(rhs, PETSC_VIEWER_STDOUT_SELF));
+      //   PetscCall(VecDestroy(&rhs));
+      // }
     }
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
@@ -331,16 +342,21 @@ int main(int argc, char *argv[]) {
     PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH));
     // 设置coarse solver
     PetscCall(PCMGGetCoarseSolve(pc, &kspCoarse));
+    // PetscCall(KSPSetType(kspCoarse, KSPGMRES));
     PetscCall(KSPSetType(kspCoarse, KSPPREONLY));
     PetscCall(KSPGetPC(kspCoarse, &pcCoarse));
     PetscCall(PCSetType(pcCoarse, PCLU));
-    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERSUPERLU_DIST));
+    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERMKL_CPARDISO));
     PetscCall(KSPSetErrorIfNotConverged(kspCoarse, PETSC_TRUE));
+    PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
+    PetscCall(KSPSetFromOptions(kspCoarse));
     // 设置一阶smoother
     PetscCall(PCMGGetSmoother(pc, 1, &kspSmoother));
+    PetscCall(KSPSetFromOptions(kspSmoother));
     // PetscCall(KSPSetType(kspSmoother, KSPCHEBYSHEV));
     PetscCall(KSPSetTolerances(kspSmoother, PETSC_DEFAULT, PETSC_DEFAULT,
                                PETSC_DEFAULT, 1));
+    PetscCall(KSPMonitorSet(kspSmoother, MyMonitor, NULL, NULL));
     PetscCall(KSPGetPC(kspSmoother, &pcSmoother));
     PetscCall(PCSetType(pcSmoother, PCBJACOBI));
     // PetscCall(KSPSetErrorIfNotConverged(kspSmoother, PETSC_TRUE));
@@ -354,6 +370,7 @@ int main(int argc, char *argv[]) {
   }
 
   PetscCall(MatDiagonalSet(C, b, INSERT_VALUES));
+  // PetscCall(MatShift(C, 1e-10));
   // PetscCall(MatAssemblyBegin(C, MAT_FINAL_ASSEMBLY));
   // PetscCall(MatAssemblyEnd(C, MAT_FINAL_ASSEMBLY));
 
@@ -361,6 +378,7 @@ int main(int argc, char *argv[]) {
   PetscCall(VecDuplicate(b, &x));
   PetscCall(VecSet(x, 0.0));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Starting to solve...\n"));
+  PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
   PetscCall(KSPSolve(ksp, b, x));
   KSPConvergedReason reason;
   PetscCall(KSPGetConvergedReason(ksp, &reason));

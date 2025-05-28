@@ -118,9 +118,9 @@ void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
 
 int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
             std::vector<int> &col_index, std::vector<double> &values) {
-  std::ifstream in("../../data/A.txt");
+  std::ifstream in("../../data/A.bin");
   if (!in) {
-    std::cerr << "Error: Could not open A.bin for reading!" << std::endl;
+    std::cerr << "Error: Could not open A.txt for reading!" << std::endl;
     return 1;
   }
 

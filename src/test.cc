@@ -1,6 +1,4 @@
 #include "matCPU.hh"
-
-#include <iomanip>
 #include <iostream>
 #include <metis.h>
 #include <petscdevicetypes.h>
@@ -18,14 +16,11 @@
 #include <chrono>
 #include <slepcst.h>
 
-#define cStar 1.0
-#define scalartype double
-
-PetscErrorCode MyMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *ctx) {
-  PetscPrintf(PETSC_COMM_WORLD, "Iteration %d: True Residual Norm %g\n", n,
-              rnorm);
-  return 0;
-}
+// PetscErrorCode MyMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *ctx) {
+//   PetscPrintf(PETSC_COMM_WORLD, "Iteration %d: True Residual Norm %g\n", n,
+//               rnorm);
+//   return 0;
+// }
 
 int main(int argc, char *argv[]) {
 
@@ -71,7 +66,6 @@ int main(int argc, char *argv[]) {
     int ncon = 1;
     int objval;
     int options[METIS_NOPTIONS];
-    int nparts = 5;
     std::vector<int> part(nrows);
     options[METIS_OPTION_OBJTYPE] = METIS_OBJTYPE_VOL;
     options[METIS_OPTION_NCUTS] = 1;
@@ -102,28 +96,13 @@ int main(int argc, char *argv[]) {
     PetscCall(ISInvertPermutation(is, nrows, &isinvert));
 
     PetscCall(MatPermute(A, isinvert, isinvert, &B));
-    // PetscCall(MatView(A, PETSC_VIEWER_STDOUT_SELF));
+
+    PetscCall(ISDestroy(&is));
+    PetscCall(ISDestroy(&isinvert));
+    PetscCall(MatDestroy(&A));
 
     PetscMemType mtype;
     PetscCall(MatSeqAIJGetCSRAndMemType(B, &row_B, &col_B, &arr_B, &mtype));
-
-    // for (int i = 0; i < nnz; ++i) {
-    //   std::cout << col_B[i] << " ";
-    // }
-    // std::cout << std::endl << std::endl << std::endl;
-
-    // 打印每个cluster控制的行索引
-    // std::vector<std::vector<int>> cluster_indices(nparts);
-    // for (int i = 0; i < nrows; ++i) {
-    //   cluster_indices[part[i]].push_back(i);
-    // }
-    // for (int i = 0; i < nparts; ++i) {
-    //   std::cout << "Cluster " << i << ": ";
-    //   for (int j = 0; j < cluster_indices[i].size(); ++j) {
-    //     std::cout << cluster_indices[i][j] << " ";
-    //   }
-    //   std::cout << std::endl;
-    // }
 
     // 计算时间差
     auto duration =
@@ -151,7 +130,6 @@ int main(int argc, char *argv[]) {
   for (int i = 1; i < nprocs; ++i) {
     row_offset[i] = row_offset[i - 1] + cluster_sizes[i - 1];
   }
-  // PetscInt total_rows = row_offset[nprocs - 1] + cluster_sizes[nprocs - 1];
 
   PetscInt *sendcounts_rowptr, *displs_rowptr, *sendcounts_nnz, *displs_nnz;
   PetscCall(PetscMalloc1(nprocs, &sendcounts_rowptr));
@@ -176,8 +154,7 @@ int main(int argc, char *argv[]) {
 
   PetscInt local_rows = cluster_sizes[rank];
 
-  // PetscCall(PetscPrintf(PETSC_COMM_SELF, "rank %d, local_rows %d\n", rank,
-  //               local_rows));
+  PetscFree(cluster_sizes);
 
   PetscInt *local_row_ptr, *local_col_index;
   PetscScalar *local_values;
@@ -199,6 +176,15 @@ int main(int argc, char *argv[]) {
     local_row_ptr[i] -= local_row_ptr[0];
   }
 
+  PetscCall(PetscFree(sendcounts_rowptr));
+  PetscCall(PetscFree(displs_rowptr));
+  PetscCall(PetscFree(sendcounts_nnz));
+  PetscCall(PetscFree(displs_nnz));
+  PetscCall(PetscFree(row_offset));
+  PetscCall(PetscFree(arr_B));
+  PetscCall(PetscFree(row_B));
+  PetscCall(PetscFree(col_B));
+
   Mat C;
 
   PetscCall(MatCreateMPIAIJWithArrays(PETSC_COMM_WORLD, local_rows, local_rows,
@@ -206,8 +192,6 @@ int main(int argc, char *argv[]) {
                                       local_col_index, local_values, &C));
 
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating matrix! \n"));
-
-  // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
 
   Vec b;
   PetscCall(MatCreateVecs(C, &b, NULL));
@@ -258,12 +242,6 @@ int main(int argc, char *argv[]) {
     PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
     PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
 
-    // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
-    // if (rank == 2) {
-    //   PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
-    //   PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
-    // }
-
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,
                            PETSC_DEFAULT, PETSC_DEFAULT, eigennum, NULL, 0,
@@ -310,26 +288,14 @@ int main(int argc, char *argv[]) {
       PetscCall(VecGetArray(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
-      // if (j == 0 && rank == 0) {
-      //   Vec rhs;
-      //   PetscCall(MatCreateVecs(Ai, NULL, &rhs));
-      //   PetscCall(MatMult(Ai, eig_vec, rhs));
-      //   PetscCall(VecView(rhs, PETSC_VIEWER_STDOUT_SELF));
-      //   PetscCall(VecDestroy(&rhs));
-      // }
     }
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
 
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
-
     PetscCall(MatDestroy(&Ai));
     PetscCall(MatDestroy(&Si));
     PetscCall(VecDestroy(&eig_vec));
-
-    // PetscCall(PetscFree(arr_eig_vec));
-    // PetscCall(PetscFree(idxm));
 
     KSP kspCoarse, kspSmoother;
     PC pcCoarse, pcSmoother;
@@ -348,7 +314,7 @@ int main(int argc, char *argv[]) {
     PetscCall(PCSetType(pcCoarse, PCLU));
     PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERMKL_CPARDISO));
     PetscCall(KSPSetErrorIfNotConverged(kspCoarse, PETSC_TRUE));
-    PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
+    // PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
     PetscCall(KSPSetFromOptions(kspCoarse));
     // 设置一阶smoother
     PetscCall(PCMGGetSmoother(pc, 1, &kspSmoother));
@@ -356,7 +322,7 @@ int main(int argc, char *argv[]) {
     // PetscCall(KSPSetType(kspSmoother, KSPCHEBYSHEV));
     PetscCall(KSPSetTolerances(kspSmoother, PETSC_DEFAULT, PETSC_DEFAULT,
                                PETSC_DEFAULT, 1));
-    PetscCall(KSPMonitorSet(kspSmoother, MyMonitor, NULL, NULL));
+    // PetscCall(KSPMonitorSet(kspSmoother, MyMonitor, NULL, NULL));
     PetscCall(KSPGetPC(kspSmoother, &pcSmoother));
     PetscCall(PCSetType(pcSmoother, PCBJACOBI));
     // PetscCall(KSPSetErrorIfNotConverged(kspSmoother, PETSC_TRUE));
@@ -370,15 +336,13 @@ int main(int argc, char *argv[]) {
   }
 
   PetscCall(MatDiagonalSet(C, b, INSERT_VALUES));
-  // PetscCall(MatShift(C, 1e-10));
-  // PetscCall(MatAssemblyBegin(C, MAT_FINAL_ASSEMBLY));
-  // PetscCall(MatAssemblyEnd(C, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatShift(C, 1e-10));
 
   Vec x;
   PetscCall(VecDuplicate(b, &x));
   PetscCall(VecSet(x, 0.0));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Starting to solve...\n"));
-  PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
+  // PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
   PetscCall(KSPSolve(ksp, b, x));
   KSPConvergedReason reason;
   PetscCall(KSPGetConvergedReason(ksp, &reason));
@@ -386,6 +350,14 @@ int main(int argc, char *argv[]) {
   PetscCall(KSPGetIterationNumber(ksp, &num));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Number of iterations: %d\n", num));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Converged reason: %d\n", reason));
+
+  PetscCall(MatDestroy(&C));
+  PetscCall(VecDestroy(&b));
+  PetscCall(VecDestroy(&x));
+  PetscCall(KSPDestroy(&ksp));
+  PetscCall(PetscFree(local_row_ptr));
+  PetscCall(PetscFree(local_col_index));
+  PetscCall(PetscFree(local_values));
 
   PetscCall(SlepcFinalize());
 }

@@ -46,14 +46,14 @@ if (CXX_FLAGS)
 endif (CXX_FLAGS)
 
 # message(STATUS "Looking for mfem ...")
-# set(MFEM_DIR "~/HPCSoft/mfem-4.7" CACHE PATH "Path to the MFEM build or install prefix.")
+# set(MFEM_DIR "~/HPCSoft/mfem-4.8" CACHE PATH "Path to the MFEM build or install prefix.")
 # if (MFEM_DIR)
 #    find_package(mfem REQUIRED NAMES MFEM HINTS "${MFEM_DIR}" "${MFEM_DIR}/build" NO_DEFAULT_PATH)
 # else()
 #    find_package(mfem REQUIRED NAMES MFEM)
 # endif()
 
-# # --- 检查 MFEM 是否支持 CUDA ---
+# --- 检查 MFEM 是否支持 CUDA ---
 # if (NOT MFEM_USE_CUDA)
 #    message(WARNING "MFEM was not compiled with CUDA support! Rebuild MFEM with -D MFEM_USE_CUDA=ON")
 # else()
@@ -70,8 +70,8 @@ endif (CXX_FLAGS)
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set
 set(SOURCES 
-# func.cc
- test.cc
+testmfem.cc
+#  test.cc
  matCPU.cc
 )
 SET(OUTPUT_NAME test)
@@ -79,7 +79,8 @@ add_executable(${OUTPUT_NAME} ${SOURCES})
 target_include_directories(${OUTPUT_NAME}
   PRIVATE
   ${PROJECT_SOURCE_DIR}/include
-  /home/ET/yjzhou/HPCSoft/METIS/include
+  $ENV{HOME}/HPCSoft/METIS/include
+  $ENV{HOME}/HPCSoft/mfem-4.8
 )
 
 
@@ -92,8 +93,9 @@ pkg_search_module(SLEPC REQUIRED IMPORTED_TARGET slepc)
 # add_library(slepc SHARED IMPORTED)
 # set_target_properties(slepc PROPERTIES IMPORTED_LOCATION ${PETSC}/lib/libslepc.so)
 target_link_libraries(${OUTPUT_NAME} PkgConfig::PETSC PkgConfig::SLEPC m)
-target_link_libraries(${OUTPUT_NAME} /home/ET/yjzhou/HPCSoft/METIS/lib/libmetis.so)
-target_link_libraries(${OUTPUT_NAME} /home/ET/yjzhou/HPCSoft/GKlib/lib/libGKlib.a)
+target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/METIS/lib/libmetis.so)
+target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/GKlib/lib/libGKlib.a)
+target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/mfem-4.8/libmfem.a)
 
 include_directories(${MFEM_INCLUDE_DIRS})
 target_link_libraries(${OUTPUT_NAME} ${MFEM_LIBRARIES})

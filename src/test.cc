@@ -5,6 +5,7 @@
 #include <petscerror.h>
 #include <petscis.h>
 #include <petscksp.h>
+#include <petsclogtypes.h>
 #include <petscmat.h>
 #include <petscpctypes.h>
 #include <petscsys.h>
@@ -24,13 +25,18 @@
 
 int main(int argc, char *argv[]) {
 
-  auto start = std::chrono::high_resolution_clock::now();
   PetscCall(SlepcInitialize(&argc, &argv, NULL, NULL));
+
+  PetscLogEvent matGen, LS;
+  PetscCall(PetscLogEventRegister("matGen", 0, &matGen));
+  PetscCall(PetscLogEventRegister("LS", 0, &LS));
+
+  PetscCall(PetscLogEventBegin(matGen, 0, 0, 0, 0));
 
   MPI_Comm comm = PETSC_COMM_WORLD;
   PetscInt rank, nprocs;
-  MPI_Comm_rank(comm, &rank);
-  MPI_Comm_size(comm, &nprocs);
+  PetscCall(MPI_Comm_rank(comm, &rank));
+  PetscCall(MPI_Comm_size(comm, &nprocs));
 
   PetscInt *cluster_sizes = NULL;
   PetscCall(PetscMalloc1(nprocs, &cluster_sizes));
@@ -39,21 +45,22 @@ int main(int argc, char *argv[]) {
   const PetscInt *row_B;
   const PetscInt *col_B;
 
+  Mat B;
   if (rank == 0) {
 
     for (int i = 0; i < nprocs; ++i) {
       cluster_sizes[i] = 0;
     }
 
-    Mat A, B;
+    Mat A;
 
     int nrows, nnz;
     std::vector<PetscScalar> values(1);
     std::vector<PetscInt> col_indices(1);
     std::vector<PetscInt> row_ptr(1);
 
-    readMat(&nrows, &nnz, row_ptr, col_indices, values);
-    // generateMat(&nrows, &nnz, row_ptr, col_indices, values);
+    // readMat(&nrows, &nnz, row_ptr, col_indices, values);
+    generateMat(&nrows, &nnz, row_ptr, col_indices, values);
 
     PetscCall(MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, nrows,
                                         row_ptr.data(), col_indices.data(),
@@ -73,8 +80,6 @@ int main(int argc, char *argv[]) {
                         NULL, NULL, &nprocs, NULL, NULL, NULL, &objval,
                         part.data());
     std::cout << "Objective for the partition is " << objval << std::endl;
-
-    auto end = std::chrono::high_resolution_clock::now();
 
     IS is;
     std::vector<PetscInt> idx(nrows, 0);
@@ -104,22 +109,16 @@ int main(int argc, char *argv[]) {
     PetscMemType mtype;
     PetscCall(MatSeqAIJGetCSRAndMemType(B, &row_B, &col_B, &arr_B, &mtype));
 
-    // 计算时间差
-    auto duration =
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    std::cout << "Time taken: " << duration.count() / 1e6 << " seconds"
-              << std::endl;
-
-    std::ofstream out("clustering.txt");
-    if (!out) {
-      std::cerr << "Error: Could not open clustering.txt for writing!"
-                << std::endl;
-      return 1;
-    }
-    for (int i = 0; i < nrows; i++) {
-      out << part[i] << std::endl;
-    }
-    out.close();
+    // std::ofstream out("clustering.txt");
+    // if (!out) {
+    //   std::cerr << "Error: Could not open clustering.txt for writing!"
+    //             << std::endl;
+    //   return 1;
+    // }
+    // for (int i = 0; i < nrows; i++) {
+    //   out << part[i] << std::endl;
+    // }
+    // out.close();
   }
 
   PetscCall(MPI_Bcast(cluster_sizes, nprocs, MPI_INT, 0, comm));
@@ -181,9 +180,8 @@ int main(int argc, char *argv[]) {
   PetscCall(PetscFree(sendcounts_nnz));
   PetscCall(PetscFree(displs_nnz));
   PetscCall(PetscFree(row_offset));
-  PetscCall(PetscFree(arr_B));
-  PetscCall(PetscFree(row_B));
-  PetscCall(PetscFree(col_B));
+
+  PetscCall(MatDestroy(&B));
 
   Mat C;
 
@@ -192,6 +190,8 @@ int main(int argc, char *argv[]) {
                                       local_col_index, local_values, &C));
 
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating matrix! \n"));
+
+  PetscCall(PetscLogEventEnd(matGen, 0, 0, 0, 0));
 
   Vec b;
   PetscCall(MatCreateVecs(C, &b, NULL));
@@ -343,7 +343,10 @@ int main(int argc, char *argv[]) {
   PetscCall(VecSet(x, 0.0));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Starting to solve...\n"));
   // PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
+
+  PetscCall(PetscLogEventBegin(LS, 0, 0, 0, 0));
   PetscCall(KSPSolve(ksp, b, x));
+  PetscCall(PetscLogEventEnd(LS, 0, 0, 0, 0));
   KSPConvergedReason reason;
   PetscCall(KSPGetConvergedReason(ksp, &reason));
   int num;
@@ -355,9 +358,6 @@ int main(int argc, char *argv[]) {
   PetscCall(VecDestroy(&b));
   PetscCall(VecDestroy(&x));
   PetscCall(KSPDestroy(&ksp));
-  PetscCall(PetscFree(local_row_ptr));
-  PetscCall(PetscFree(local_col_index));
-  PetscCall(PetscFree(local_values));
 
   PetscCall(SlepcFinalize());
 }

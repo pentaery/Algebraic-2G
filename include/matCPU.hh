@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <mfem.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,21 +20,21 @@
 // #include <amgx_c.h>
 
 void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
-    double *csrVal);
+                 double *csrVal);
 
 int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
             std::vector<int> &col_index, std::vector<double> &values);
 
-// int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
-//                 std::vector<int> &col_index, std::vector<double> &values);
-
+int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
+                std::vector<int> &col_index, std::vector<double> &values);
 
 void matDecompose2LM(int *nrows, int *nnz, std::vector<int> &row_ptr,
                      std::vector<int> &col_index, std::vector<double> &values);
 
 // void processDataThrust(thrust::device_vector<int> &globalTolocal,
 //                        thrust::device_vector<int> &count,
-//                        thrust::device_vector<int> &part, int nvtxs, int nparts);
+//                        thrust::device_vector<int> &part, int nvtxs, int
+//                        nparts);
 
 PetscErrorCode formAUX(std::vector<int> &row_ptr, std::vector<int> &col_index,
                        std::vector<float> &values, int nrows, int nnz);

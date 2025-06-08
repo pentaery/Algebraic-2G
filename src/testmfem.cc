@@ -35,6 +35,7 @@
 //
 //               We recommend viewing examples 1-4 before viewing this example.
 
+#include "fem/coefficient.hpp"
 #include "mfem.hpp"
 #include <algorithm>
 #include <fstream>
@@ -49,6 +50,98 @@ real_t pFun_ex(const Vector &x);
 void fFun(const Vector &x, Vector &f);
 real_t gFun(const Vector &x);
 real_t f_natural(const Vector &x);
+
+class DiagonalMassIntegrator : public BilinearFormIntegrator {
+private:
+  Coefficient &k; // 空间依赖的系数
+  Mesh *mesh;     // 网格对象，用于访问共享面和相邻单元
+public:
+  DiagonalMassIntegrator(Coefficient &k_, Mesh *mesh_) : k(k_), mesh(mesh_) {}
+
+  virtual void AssembleElementMatrix(const FiniteElement &el,
+                                     ElementTransformation &Trans,
+                                     DenseMatrix &elmat) override {
+    int dof = el.GetDof();
+    elmat.SetSize(dof, dof);
+    elmat = 0.0;
+
+    // 确保是 RT0 元（Raviart-Thomas 最低阶）
+    if (el.GetMapType() != FiniteElement::H_DIV) {
+      MFEM_ABORT(
+          "This integrator is designed for H(div) elements (e.g., RT0).");
+    }
+
+    // 获取当前单元索引
+    int elem_idx = Trans.ElementNo;
+
+    // 获取单元的几何类型和面数（自由度数 = 面数）
+    Geometry::Type geom_type = el.GetGeomType();
+    int nfaces = mesh->GetElement(elem_idx)->GetNFaces();
+
+    // 确保自由度数与面数一致
+    MFEM_VERIFY(dof == nfaces,
+                "Number of DoFs must equal number of faces for RT0.");
+
+    // 遍历单元的每个面（对应一个自由度）
+    for (int face = 0; face < nfaces; face++) {
+      // 获取面在网格中的全局索引
+      int face_idx = mesh->GetElementFace(elem_idx, face);
+
+      // 获取面上的积分规则（面上的高斯积分）
+      const IntegrationRule *ir =
+          &IntRules.Get(mesh->GetFaceGeometry(face_idx), 1);
+      // RT0 元在面上法向分量为常数，积分阶数 1 足以准确计算
+
+      // 获取共享面两侧的单元
+      Array<int> elem_pair;
+      mesh->GetFaceElements(face_idx, &elem_pair);
+      int elem1_idx = elem_pair[0]; // 当前单元
+      int elem2_idx =
+          (elem_pair.Size() == 2) ? elem_pair[1] : -1; // 相邻单元（若存在）
+
+      // 获取面上的法向量和面积
+      FaceElementTransformations *face_trans =
+          mesh->GetFaceElementTransformations(face_idx);
+      MFEM_VERIFY(face_trans, "Failed to get face transformations.");
+
+      // 遍历面上的积分点
+      double face_contrib = 0.0;
+      for (int i = 0; i < ir->GetNPoints(); i++) {
+        const IntegrationPoint &ip = ir->IntPoint(i);
+        face_trans->SetIntPoint(&ip);
+
+        // 计算当前单元的 k 值
+        ElementTransformation *Trans1 =
+            mesh->GetElementTransformation(elem1_idx);
+        Trans1->SetIntPoint(&ip); // 映射到单元1的积分点
+        double k1 = k.Eval(*Trans1, ip);
+
+        // 计算相邻单元的 k 值（如果存在）
+        double k2 = k1; // 默认值，防止无相邻单元
+        if (elem2_idx >= 0) {
+          ElementTransformation *Trans2 =
+              mesh->GetElementTransformation(elem2_idx);
+          Trans2->SetIntPoint(&ip); // 映射到单元2的积分点
+          k2 = k.Eval(*Trans2, ip);
+        }
+
+        // 计算倒数的平均值 k_eff = 1 / (1/k1 + 1/k2)
+        double k_eff =
+            (k1 > 0.0 && k2 > 0.0) ? 1.0 / (1.0 / k1 + 1.0 / k2) : k1;
+
+        // 计算积分权重（面上的权重）
+        double w = ip.weight * face_trans->Weight();
+
+        // RT0 基函数在对应面上的法向分量为 1，其他面为 0
+        // 对角项贡献：k_eff * (v_j · n)^2 * w，其中 v_j · n = 1
+        face_contrib += w * k_eff;
+      }
+
+      // 将贡献加到对角项 elmat(face, face)
+      elmat(face, face) += face_contrib;
+    }
+  }
+};
 
 int main(int argc, char *argv[]) {
   StopWatch chrono;
@@ -86,19 +179,8 @@ int main(int argc, char *argv[]) {
   // 3. Read the mesh from the given mesh file. We can handle triangular,
   //    quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
   //    the same code.
-  Mesh *mesh = new Mesh(mesh_file, 1, 1);
+  Mesh *mesh = new Mesh(mesh_file, 1, 0);
   int dim = mesh->Dimension();
-
-  // 4. Refine the mesh to increase the resolution. In this example we do
-  //    'ref_levels' of uniform refinement. We choose 'ref_levels' to be the
-  //    largest number that gives a final mesh with no more than 10,000
-  //    elements.
-  // {
-  //   int ref_levels = (int)floor(log(10000. / mesh->GetNE()) / log(2.) / dim);
-  //   for (int l = 0; l < ref_levels; l++) {
-  //     mesh->UniformRefinement();
-  //   }
-  // }
 
   // 5. Define a finite element space on the mesh. Here we use the
   //    Raviart-Thomas finite elements of the specified order.
@@ -165,44 +247,27 @@ int main(int argc, char *argv[]) {
   BilinearForm *mVarf(new BilinearForm(R_space));
   MixedBilinearForm *bVarf(new MixedBilinearForm(R_space, W_space));
 
-  if (pa) {
-    mVarf->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-  }
-  mVarf->AddDomainIntegrator(new VectorFEMassIntegrator(k));
+  mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k));
   mVarf->Assemble();
-  if (!pa) {
-    mVarf->Finalize();
-  }
+  mVarf->Finalize();
 
-  if (pa) {
-    bVarf->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-  }
   bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
   bVarf->Assemble();
-  if (!pa) {
-    bVarf->Finalize();
-  }
+  bVarf->Finalize();
 
   BlockOperator darcyOp(block_offsets);
 
   TransposeOperator *Bt = NULL;
 
-  if (pa) {
-    Bt = new TransposeOperator(bVarf);
+  SparseMatrix &M(mVarf->SpMat());
+  M.Print(std::cout);
+  SparseMatrix &B(bVarf->SpMat());
+  B *= -1.;
+  Bt = new TransposeOperator(&B);
 
-    darcyOp.SetBlock(0, 0, mVarf);
-    darcyOp.SetBlock(0, 1, Bt, -1.0);
-    darcyOp.SetBlock(1, 0, bVarf, -1.0);
-  } else {
-    SparseMatrix &M(mVarf->SpMat());
-    SparseMatrix &B(bVarf->SpMat());
-    B *= -1.;
-    Bt = new TransposeOperator(&B);
-
-    darcyOp.SetBlock(0, 0, &M);
-    darcyOp.SetBlock(0, 1, Bt);
-    darcyOp.SetBlock(1, 0, &B);
-  }
+  darcyOp.SetBlock(0, 0, &M);
+  darcyOp.SetBlock(0, 1, Bt);
+  darcyOp.SetBlock(1, 0, &B);
 
   // 10. Construct the operators for preconditioner
   //
@@ -211,56 +276,37 @@ int main(int argc, char *argv[]) {
   //
   //     Here we use Symmetric Gauss-Seidel to approximate the inverse of the
   //     pressure Schur Complement
-  SparseMatrix *MinvBt = NULL;
-  Vector Md(mVarf->Height());
+  //   SparseMatrix *MinvBt = NULL;
+  //   Vector Md(mVarf->Height());
 
-  BlockDiagonalPreconditioner darcyPrec(block_offsets);
-  Solver *invM, *invS;
-  SparseMatrix *S = NULL;
+  //   BlockDiagonalPreconditioner darcyPrec(block_offsets);
+  //   Solver *invM, *invS;
+  //   SparseMatrix *S = NULL;
 
-  if (pa) {
-    mVarf->AssembleDiagonal(Md);
-    auto Md_host = Md.HostRead();
-    Vector invMd(mVarf->Height());
-    for (int i = 0; i < mVarf->Height(); ++i) {
-      invMd(i) = 1.0 / Md_host[i];
-    }
+  //   M.GetDiag(Md);
+  //   Md.HostReadWrite();
 
-    Vector BMBt_diag(bVarf->Height());
-    bVarf->AssembleDiagonal_ADAt(invMd, BMBt_diag);
+  //   MinvBt = Transpose(B);
 
-    Array<int> ess_tdof_list; // empty
+  //   for (int i = 0; i < Md.Size(); i++) {
+  //     MinvBt->ScaleRow(i, 1. / Md(i));
+  //   }
 
-    invM = new OperatorJacobiSmoother(Md, ess_tdof_list);
-    invS = new OperatorJacobiSmoother(BMBt_diag, ess_tdof_list);
-  } else {
-    SparseMatrix &M(mVarf->SpMat());
-    M.GetDiag(Md);
-    Md.HostReadWrite();
+  //   S = Mult(B, *MinvBt);
 
-    SparseMatrix &B(bVarf->SpMat());
-    MinvBt = Transpose(B);
+  //   invM = new DSmoother(M);
 
-    for (int i = 0; i < Md.Size(); i++) {
-      MinvBt->ScaleRow(i, 1. / Md(i));
-    }
+  // #ifndef MFEM_USE_SUITESPARSE
+  //   invS = new GSSmoother(*S);
+  // #else
+  //   invS = new UMFPackSolver(*S);
+  // #endif
 
-    S = Mult(B, *MinvBt);
+  //   invM->iterative_mode = false;
+  //   invS->iterative_mode = false;
 
-    invM = new DSmoother(M);
-
-#ifndef MFEM_USE_SUITESPARSE
-    invS = new GSSmoother(*S);
-#else
-    invS = new UMFPackSolver(*S);
-#endif
-  }
-
-  invM->iterative_mode = false;
-  invS->iterative_mode = false;
-
-  darcyPrec.SetDiagonalBlock(0, invM);
-  darcyPrec.SetDiagonalBlock(1, invS);
+  //   darcyPrec.SetDiagonalBlock(0, invM);
+  //   darcyPrec.SetDiagonalBlock(1, invS);
 
   // 11. Solve the linear system with MINRES.
   //     Check the norm of the unpreconditioned residual.
@@ -275,7 +321,7 @@ int main(int argc, char *argv[]) {
   solver.SetRelTol(rtol);
   solver.SetMaxIter(maxIter);
   solver.SetOperator(darcyOp);
-  solver.SetPreconditioner(darcyPrec);
+  // solver.SetPreconditioner(darcyPrec);
   solver.SetPrintLevel(1);
   x = 0.0;
   solver.Mult(rhs, x);
@@ -314,61 +360,14 @@ int main(int argc, char *argv[]) {
   std::cout << "|| u_h - u_ex || / || u_ex || = " << err_u / norm_u << "\n";
   std::cout << "|| p_h - p_ex || / || p_ex || = " << err_p / norm_p << "\n";
 
-  // 13. Save the mesh and the solution. This output can be viewed later using
-  //     GLVis: "glvis -m ex5.mesh -g sol_u.gf" or "glvis -m ex5.mesh -g
-  //     sol_p.gf".
-  {
-    ofstream mesh_ofs("ex5.mesh");
-    mesh_ofs.precision(8);
-    mesh->Print(mesh_ofs);
-
-    ofstream u_ofs("sol_u.gf");
-    u_ofs.precision(8);
-    u.Save(u_ofs);
-
-    ofstream p_ofs("sol_p.gf");
-    p_ofs.precision(8);
-    p.Save(p_ofs);
-  }
-
-  // 14. Save data in the VisIt format
-  VisItDataCollection visit_dc("Example5", mesh);
-  visit_dc.RegisterField("velocity", &u);
-  visit_dc.RegisterField("pressure", &p);
-  visit_dc.Save();
-
-  // 15. Save data in the ParaView format
-  ParaViewDataCollection paraview_dc("Example5", mesh);
-  paraview_dc.SetPrefixPath("ParaView");
-  paraview_dc.SetLevelsOfDetail(order);
-  paraview_dc.SetCycle(0);
-  paraview_dc.SetDataFormat(VTKFormat::BINARY);
-  paraview_dc.SetHighOrderOutput(true);
-  paraview_dc.SetTime(0.0); // set the time
-  paraview_dc.RegisterField("velocity", &u);
-  paraview_dc.RegisterField("pressure", &p);
-  paraview_dc.Save();
-
-  // 16. Send the solution by socket to a GLVis server.
-  if (visualization) {
-    char vishost[] = "localhost";
-    int visport = 19916;
-    socketstream u_sock(vishost, visport);
-    u_sock.precision(8);
-    u_sock << "solution\n" << *mesh << u << "window_title 'Velocity'" << endl;
-    socketstream p_sock(vishost, visport);
-    p_sock.precision(8);
-    p_sock << "solution\n" << *mesh << p << "window_title 'Pressure'" << endl;
-  }
-
   // 17. Free the used memory.
   delete fform;
   delete gform;
-  delete invM;
-  delete invS;
-  delete S;
+  // delete invM;
+  // delete invS;
+  // delete S;
   delete Bt;
-  delete MinvBt;
+  // delete MinvBt;
   delete mVarf;
   delete bVarf;
   delete W_space;

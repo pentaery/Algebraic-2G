@@ -70,8 +70,8 @@ endif (CXX_FLAGS)
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set
 set(SOURCES 
-testmfem.cc
-#  test.cc
+# ex5.cc
+ testmfem.cc
  matCPU.cc
 )
 SET(OUTPUT_NAME test)

@@ -36,6 +36,9 @@
 //               We recommend viewing examples 1-4 before viewing this example.
 
 #include "fem/coefficient.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/sparsemat.hpp"
+#include "linalg/vector.hpp"
 #include "mfem.hpp"
 #include <algorithm>
 #include <fstream>
@@ -50,6 +53,32 @@ real_t pFun_ex(const Vector &x);
 void fFun(const Vector &x, Vector &f);
 real_t gFun(const Vector &x);
 real_t f_natural(const Vector &x);
+
+void ComputeTranspose(const SparseMatrix &A, SparseMatrix &At) {
+  // 获取原始矩阵的维度
+  int num_rows = A.Height();
+  int num_cols = A.Width();
+
+  // 创建转置矩阵 (列数为原始矩阵的行数，行数为原始矩阵的列数)
+  At = SparseMatrix(num_cols, num_rows);
+
+  // 获取原始矩阵的 CSR 数据
+  const int *I = A.GetI();          // 行指针
+  const int *J = A.GetJ();          // 列索引
+  const double *Data = A.GetData(); // 非零值
+
+  // 遍历原始矩阵的非零元素
+  for (int i = 0; i < num_rows; ++i) {
+    for (int j_ptr = I[i]; j_ptr < I[i + 1]; ++j_ptr) {
+      int j = J[j_ptr];
+      double value = Data[j_ptr];
+      At.Add(j, i, value); // 交换行和列
+    }
+  }
+
+  // 完成转置矩阵的构造
+  At.Finalize();
+}
 
 class DiagonalMassIntegrator : public BilinearFormIntegrator {
 private:
@@ -76,7 +105,6 @@ public:
 
     // 获取当前元素索引
     int elem_idx = Trans.ElementNo;
-    std::cout << "Processing element index: " << elem_idx << "\n";
 
     // 为每个自由度（边）计算 k 的倒数平均值
     Vector k_avg(dof); // 存储每个自由度的 k_avg
@@ -90,6 +118,10 @@ public:
     }
 
     // 遍历每个自由度（边）
+
+    std::cout << "Processing element " << elem_idx << " with " << dof
+              << " DOFs (edges), k = " << k.Eval(Trans, IntegrationPoint())
+              << std::endl;
     for (int j = 0; j < dof; j++) {
       int face_idx = edges[j]; // 第 j 个自由度对应的边索引
 
@@ -100,19 +132,22 @@ public:
       // 获取当前元素的 k 值
       double k_current =
           k_values ? (*k_values)[elem_idx] : k.Eval(Trans, IntegrationPoint());
+      // // 计算 k_avg
+      // double k_inv_avg = 1.0 / k_current;
+      // int neighbor_count = 1;
+      // if (elem2 >= 0) { // 如果有邻居元素（非边界边）
+      //   double k_neighbor = k_values
+      //                           ? (*k_values)[elem2]
+      //                           :
+      //                           k.Eval(*mesh->GetElementTransformation(elem2),
+      //                                    IntegrationPoint());
+      //   k_inv_avg = 0.5 * (1.0 / k_current + 1.0 / k_neighbor); // 倒数平均
+      //   neighbor_count = 2;
+      // }
+      k_avg(j) = 1.0 / (2 * k_current); // 转换为 k_avg
 
-      // 计算 k_avg
-      double k_inv_avg = 1.0 / k_current;
-      int neighbor_count = 1;
-      if (elem2 >= 0) { // 如果有邻居元素（非边界边）
-        double k_neighbor = k_values
-                                ? (*k_values)[elem2]
-                                : k.Eval(*mesh->GetElementTransformation(elem2),
-                                         IntegrationPoint());
-        k_inv_avg = 0.5 * (1.0 / k_current + 1.0 / k_neighbor); // 倒数平均
-        neighbor_count = 2;
-      }
-      k_avg(j) = neighbor_count / k_inv_avg; // 转换为 k_avg
+      std::cout << "Edge " << j << ", k_current: " << k_current
+                << " k_avg: " << k_avg(j) << std::endl;
     }
 
     // 使用默认积分规则（RT0 基函数为常数，order=0 足够）
@@ -192,6 +227,9 @@ int main(int argc, char *argv[]) {
   FiniteElementSpace *R_space = new FiniteElementSpace(mesh, hdiv_coll);
   FiniteElementSpace *W_space = new FiniteElementSpace(mesh, l2_coll);
 
+  Array<int> boundary_dofs;
+  R_space->GetBoundaryTrueDofs(boundary_dofs);
+
   // 6. Define the BlockStructure of the problem, i.e. define the array of
   //    offsets for each variable. The last component of the Array is the sum
   //    of the dimensions of each block.
@@ -263,9 +301,25 @@ int main(int argc, char *argv[]) {
 
   SparseMatrix &M(mVarf->SpMat());
   M.Print(std::cout);
+  Vector diag;
+  M.GetDiag(diag);
+
   SparseMatrix &B(bVarf->SpMat());
-  B *= -1.;
+  for (int i = 0; i < boundary_dofs.Size(); i++) {
+    B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
+  }
+  B.Print(std::cout);
+
+  // B *= -1.;
   Bt = new TransposeOperator(&B);
+  SparseMatrix BT;
+  ComputeTranspose(B, BT);
+  // BT.Print(std::cout);
+
+  SparseMatrix *C = Mult(B, M);
+
+  SparseMatrix *FINAL = Mult(*C, BT);
+  // FINAL->Print(std::cout);
 
   darcyOp.SetBlock(0, 0, &M);
   darcyOp.SetBlock(0, 1, Bt);
@@ -421,3 +475,10 @@ real_t gFun(const Vector &x) {
 }
 
 real_t f_natural(const Vector &x) { return (-pFun_ex(x)); }
+
+double k_function(const Vector &x) {
+  double x_coord = x(0);
+  double y_coord = x(1);
+  // 示例：k 随 x 坐标线性变化
+  return 1.0 + 0.5 * x_coord;
+}

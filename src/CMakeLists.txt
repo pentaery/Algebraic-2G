@@ -72,6 +72,7 @@ endif (CXX_FLAGS)
 set(SOURCES 
 # ex5.cc
  testmfem.cc
+#  tpfa.cc
  matCPU.cc
 )
 SET(OUTPUT_NAME test)

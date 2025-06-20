@@ -43,6 +43,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <type_traits>
 
 using namespace std;
 using namespace mfem;
@@ -111,23 +112,23 @@ public:
     k_avg = 0.0;
 
     // 获取当前元素的所有边
-    Array<int> edges, orientations;
-    mesh->GetElementEdges(elem_idx, edges, orientations);
-    if (edges.Size() != dof) {
-      throw std::runtime_error("Number of edges does not match DOFs");
-    }
+    // Array<int> edges, orientations;
+    // mesh->GetElementEdges(elem_idx, edges, orientations);
+    // if (edges.Size() != dof) {
+    //   throw std::runtime_error("Number of edges does not match DOFs");
+    // }
 
     // 遍历每个自由度（边）
 
-    std::cout << "Processing element " << elem_idx << " with " << dof
-              << " DOFs (edges), k = " << k.Eval(Trans, IntegrationPoint())
-              << std::endl;
+    // std::cout << "Processing element " << elem_idx << " with " << dof
+    //           << " DOFs (edges), k = " << k.Eval(Trans, IntegrationPoint())
+    //           << std::endl;
     for (int j = 0; j < dof; j++) {
-      int face_idx = edges[j]; // 第 j 个自由度对应的边索引
+      // int face_idx = edges[j]; // 第 j 个自由度对应的边索引
 
       // 获取边连接的两个元素
-      int elem1, elem2;
-      mesh->GetFaceElements(face_idx, &elem1, &elem2);
+      // int elem1, elem2;
+      // mesh->GetFaceElements(face_idx, &elem1, &elem2);
 
       // 获取当前元素的 k 值
       double k_current =
@@ -146,8 +147,8 @@ public:
       // }
       k_avg(j) = 1.0 / (2 * k_current); // 转换为 k_avg
 
-      std::cout << "Edge " << j << ", k_current: " << k_current
-                << " k_avg: " << k_avg(j) << std::endl;
+      // std::cout << "Edge " << j << ", k_current: " << k_current
+      //           << " k_avg: " << k_avg(j) << std::endl;
     }
 
     // 使用默认积分规则（RT0 基函数为常数，order=0 足够）
@@ -157,24 +158,124 @@ public:
       ir = &IntRules.Get(el.GetGeomType(), order);
     }
 
+    double area_or_volume = 0.0;
+
+    for (int i = 0; i < ir->GetNPoints(); i++) {
+      const IntegrationPoint &ip = ir->IntPoint(i);
+      Trans.SetIntPoint(&ip);
+      area_or_volume += ip.weight * Trans.Weight();
+    }
+    // std::cout << "Element " << Trans.ElementNo << ": "
+    //           << (dim == 2 ? "area" : "volume") << " = " << area_or_volume
+    //           << "\n";
+
     DenseMatrix vshape(dof, dim);
     Vector vshape_sq(dof);
 
     // 遍历积分点
-    for (int i = 0; i < ir->GetNPoints(); i++) {
-      const IntegrationPoint &ip = ir->IntPoint(i);
-      Trans.SetIntPoint(&ip);
-      el.CalcVShape(Trans, vshape);
+    // for (int i = 0; i < ir->GetNPoints(); i++) {
+    //   const IntegrationPoint &ip = ir->IntPoint(i);
+    //   Trans.SetIntPoint(&ip);
+    //   el.CalcVShape(Trans, vshape);
 
-      double w = ip.weight * Trans.Weight();
+    //   double w = ip.weight * Trans.Weight();
 
-      // 计算对角项，使用每个自由度对应的 k_avg
-      vshape_sq = 0.0;
-      for (int j = 0; j < dof; j++) {
-        for (int d = 0; d < dim; d++) {
-          vshape_sq(j) += vshape(j, d) * vshape(j, d);
+    //   // 计算对角项，使用每个自由度对应的 k_avg
+    //   vshape_sq = 0.0;
+    //   for (int j = 0; j < dof; j++) {
+    //     for (int d = 0; d < dim; d++) {
+    //       vshape_sq(j) += vshape(j, d) * vshape(j, d);
+    //     }
+    //     elmat(j, j) += w * k_avg(j) * vshape_sq(j); // 使用自由度对应的 k_avg
+    //   }
+    // }
+
+    for (int j = 0; j < dof; ++j) {
+      elmat(j, j) += area_or_volume * k_avg(j);
+    }
+  }
+};
+
+class CustomRT0P0Integrator : public BilinearFormIntegrator {
+private:
+  Mesh *mesh;
+
+public:
+  CustomRT0P0Integrator(Mesh *mesh_) : mesh(mesh_) {}
+
+  virtual void AssembleElementMatrix2(const FiniteElement &trial_fe,
+                                      const FiniteElement &test_fe,
+                                      ElementTransformation &Trans,
+                                      DenseMatrix &elmat) override {
+    int trial_dof = trial_fe.GetDof(); // RT0 的自由度数
+    int test_dof = test_fe.GetDof();   // P0 的自由度数 (通常为 1)
+    int elem_idx = Trans.ElementNo;
+
+    std::cout << "Processing element " << elem_idx
+              << " with trial_dof = " << trial_dof
+              << ", test_dof = " << test_dof << std::endl;
+
+    Array<int> edges, orientations;
+    mesh->GetElementEdges(elem_idx, edges, orientations);
+
+    // 初始化元素矩阵
+    elmat.SetSize(test_dof, trial_dof);
+    elmat = 0.0;
+
+    // 获取网格维度
+    int dim = mesh->Dimension();
+
+    // 存储边长（2D）或面积（3D）
+    Vector measure(edges.Size());
+
+    if (dim == 2) {
+      // 2D: Compute edge lengths
+      Array<int> edges, orientations;
+      mesh->GetElementEdges(elem_idx, edges, orientations);
+
+      const IntegrationRule *ir =
+          &IntRules.Get(Geometry::SEGMENT, 1); // 1D integration for edges
+
+      for (int i = 0; i < edges.Size(); i++) {
+        ElementTransformation *edge_trans =
+            mesh->GetEdgeTransformation(edges[i]);
+        double meas = 0.0;
+        for (int j = 0; j < ir->GetNPoints(); j++) {
+          const IntegrationPoint &ip = ir->IntPoint(j);
+          edge_trans->SetIntPoint(&ip);
+          meas += ip.weight * edge_trans->Weight();
         }
-        elmat(j, j) += w * k_avg(j) * vshape_sq(j); // 使用自由度对应的 k_avg
+        measure(i) = meas;
+      }
+    } else if (dim == 3) {
+      // 3D: Compute face areas
+      Array<int> faces, orientations;
+      mesh->GetElementFaces(elem_idx, faces, orientations);
+
+      for (int i = 0; i < faces.Size(); i++) {
+        // Get face geometry and transformation
+        int face_idx = faces[i];
+        Geometry::Type face_geom = mesh->GetFaceGeometry(face_idx);
+        ElementTransformation *face_trans =
+            mesh->GetFaceTransformation(face_idx);
+
+        // Select integration rule based on face geometry
+        const IntegrationRule *ir =
+            &IntRules.Get(face_geom, 1); // 2D integration for faces
+
+        double meas = 0.0;
+        for (int j = 0; j < ir->GetNPoints(); j++) {
+          const IntegrationPoint &ip = ir->IntPoint(j);
+          face_trans->SetIntPoint(&ip);
+          meas += ip.weight * face_trans->Weight();
+        }
+        measure(i) = meas;
+      }
+    }
+
+    for (int i = 0; i < trial_dof; i++) {
+      for (int j = 0; j < test_dof; j++) {
+        elmat(j, i) += measure(i);
       }
     }
   }
@@ -184,7 +285,7 @@ int main(int argc, char *argv[]) {
   StopWatch chrono;
 
   // 1. Parse command-line options.
-  const char *mesh_file = "../../data/structured.mesh";
+  const char *mesh_file = "../../data/structured3d.mesh";
   int order = 0;
   bool pa = false;
   const char *device_config = "cpu";
@@ -255,7 +356,8 @@ int main(int argc, char *argv[]) {
   VectorFunctionCoefficient ucoeff(dim, uFun_ex);
   FunctionCoefficient pcoeff(pFun_ex);
 
-  // 8. Allocate memory (x, rhs) for the analytical solution and the right hand
+  // 8. Allocate memory (x, rhs) for the analytical solution and the right
+  // hand
   //    side.  Define the GridFunction u,p for the finite element solution and
   //    linear forms fform and gform for the right hand side.  The data
   //    allocated by x and rhs are passed as a reference to the grid functions
@@ -291,7 +393,9 @@ int main(int argc, char *argv[]) {
   mVarf->Assemble();
   mVarf->Finalize();
 
-  bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+  // bVarf->AddDomainIntegrator(new VectorFEDivergenceIntegrator);
+  bVarf->AddDomainIntegrator(
+      new CustomRT0P0Integrator(mesh)); // 自定义的 RT0-P0 积分器
   bVarf->Assemble();
   bVarf->Finalize();
 
@@ -366,55 +470,56 @@ int main(int argc, char *argv[]) {
 
   // 11. Solve the linear system with MINRES.
   //     Check the norm of the unpreconditioned residual.
-  int maxIter(1000);
-  real_t rtol(1.e-6);
-  real_t atol(1.e-10);
+  // int maxIter(1000);
+  // real_t rtol(1.e-6);
+  // real_t atol(1.e-10);
 
-  chrono.Clear();
-  chrono.Start();
-  MINRESSolver solver;
-  solver.SetAbsTol(atol);
-  solver.SetRelTol(rtol);
-  solver.SetMaxIter(maxIter);
-  solver.SetOperator(darcyOp);
-  // solver.SetPreconditioner(darcyPrec);
-  solver.SetPrintLevel(1);
-  x = 0.0;
-  solver.Mult(rhs, x);
-  if (device.IsEnabled()) {
-    x.HostRead();
-  }
-  chrono.Stop();
+  // chrono.Clear();
+  // chrono.Start();
+  // MINRESSolver solver;
+  // solver.SetAbsTol(atol);
+  // solver.SetRelTol(rtol);
+  // solver.SetMaxIter(maxIter);
+  // solver.SetOperator(darcyOp);
+  // // solver.SetPreconditioner(darcyPrec);
+  // solver.SetPrintLevel(1);
+  // x = 0.0;
+  // solver.Mult(rhs, x);
+  // if (device.IsEnabled()) {
+  //   x.HostRead();
+  // }
+  // chrono.Stop();
 
-  if (solver.GetConverged()) {
-    std::cout << "MINRES converged in " << solver.GetNumIterations()
-              << " iterations with a residual norm of " << solver.GetFinalNorm()
-              << ".\n";
-  } else {
-    std::cout << "MINRES did not converge in " << solver.GetNumIterations()
-              << " iterations. Residual norm is " << solver.GetFinalNorm()
-              << ".\n";
-  }
-  std::cout << "MINRES solver took " << chrono.RealTime() << "s.\n";
+  // if (solver.GetConverged()) {
+  //   std::cout << "MINRES converged in " << solver.GetNumIterations()
+  //             << " iterations with a residual norm of " <<
+  //             solver.GetFinalNorm()
+  //             << ".\n";
+  // } else {
+  //   std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+  //             << " iterations. Residual norm is " << solver.GetFinalNorm()
+  //             << ".\n";
+  // }
+  // std::cout << "MINRES solver took " << chrono.RealTime() << "s.\n";
 
-  // 12. Create the grid functions u and p. Compute the L2 error norms.
-  GridFunction u, p;
-  u.MakeRef(R_space, x.GetBlock(0), 0);
-  p.MakeRef(W_space, x.GetBlock(1), 0);
+  // // 12. Create the grid functions u and p. Compute the L2 error norms.
+  // GridFunction u, p;
+  // u.MakeRef(R_space, x.GetBlock(0), 0);
+  // p.MakeRef(W_space, x.GetBlock(1), 0);
 
-  int order_quad = max(2, 2 * order + 1);
-  const IntegrationRule *irs[Geometry::NumGeom];
-  for (int i = 0; i < Geometry::NumGeom; ++i) {
-    irs[i] = &(IntRules.Get(i, order_quad));
-  }
+  // int order_quad = max(2, 2 * order + 1);
+  // const IntegrationRule *irs[Geometry::NumGeom];
+  // for (int i = 0; i < Geometry::NumGeom; ++i) {
+  //   irs[i] = &(IntRules.Get(i, order_quad));
+  // }
 
-  real_t err_u = u.ComputeL2Error(ucoeff, irs);
-  real_t norm_u = ComputeLpNorm(2., ucoeff, *mesh, irs);
-  real_t err_p = p.ComputeL2Error(pcoeff, irs);
-  real_t norm_p = ComputeLpNorm(2., pcoeff, *mesh, irs);
+  // real_t err_u = u.ComputeL2Error(ucoeff, irs);
+  // real_t norm_u = ComputeLpNorm(2., ucoeff, *mesh, irs);
+  // real_t err_p = p.ComputeL2Error(pcoeff, irs);
+  // real_t norm_p = ComputeLpNorm(2., pcoeff, *mesh, irs);
 
-  std::cout << "|| u_h - u_ex || / || u_ex || = " << err_u / norm_u << "\n";
-  std::cout << "|| p_h - p_ex || / || p_ex || = " << err_p / norm_p << "\n";
+  // std::cout << "|| u_h - u_ex || / || u_ex || = " << err_u / norm_u << "\n";
+  // std::cout << "|| p_h - p_ex || / || p_ex || = " << err_p / norm_p << "\n";
 
   // 17. Free the used memory.
   delete fform;

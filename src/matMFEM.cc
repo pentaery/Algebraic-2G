@@ -1,49 +1,14 @@
-//                                MFEM Example 5
-//
-// Compile with: make ex5
-//
-// Sample runs:  ex5 -m ../data/square-disc.mesh
-//               ex5 -m ../data/star.mesh
-//               ex5 -m ../data/star.mesh -pa
-//               ex5 -m ../data/beam-tet.mesh
-//               ex5 -m ../data/beam-hex.mesh
-//               ex5 -m ../data/beam-hex.mesh -pa
-//               ex5 -m ../data/escher.mesh
-//               ex5 -m ../data/fichera.mesh
-//
-// Device sample runs:
-//               ex5 -m ../data/star.mesh -pa -d cuda
-//               ex5 -m ../data/star.mesh -pa -d raja-cuda
-//               ex5 -m ../data/star.mesh -pa -d raja-omp
-//               ex5 -m ../data/beam-hex.mesh -pa -d cuda
-//
-// Description:  This example code solves a simple 2D/3D mixed Darcy problem
-//               corresponding to the saddle point system
-//
-//                                 k*u + grad p = f
-//                                 - div u      = g
-//
-//               with natural boundary condition -p = <given pressure>.
-//               Here, we use a given exact solution (u,p) and compute the
-//               corresponding r.h.s. (f,g).  We discretize with Raviart-Thomas
-//               finite elements (velocity u) and piecewise discontinuous
-//               polynomials (pressure p).
-//
-//               The example demonstrates the use of the BlockOperator class, as
-//               well as the collective saving of several grid functions in
-//               VisIt (visit.llnl.gov) and ParaView (paraview.org) formats.
-//
-//               We recommend viewing examples 1-4 before viewing this example.
-
 #include "fem/coefficient.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/sparsemat.hpp"
-#include "linalg/vector.hpp"
+#include "fem/gridfunc.hpp"
+#include "matCPU.hh"
 #include "mfem.hpp"
-#include <algorithm>
-#include <fstream>
-#include <iostream>
-#include <type_traits>
+
+double k_function(const mfem::Vector &x) {
+  double x_coord = x(0);
+  double y_coord = x(1);
+  // 示例：k 随 x 坐标线性变化
+  return 1.0 + 0.5 * x_coord;
+}
 
 void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
   // 获取原始矩阵的维度
@@ -71,6 +36,39 @@ void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
   At.Finalize();
 }
 
+void sortCSRRows(int m, int nnz, int *csrRowPtr, int *csrColInd,
+                 double *csrVal) {
+  // 遍历每一行
+  for (int row = 0; row < m; ++row) {
+    // 获取当前行的起始和结束位置
+    int start = csrRowPtr[row];
+    int end = csrRowPtr[row + 1];
+    int row_nnz = end - start; // 当前行的非零元素个数
+
+    if (row_nnz <= 1) {
+      // 如果行内元素少于 2 个，无需排序
+      continue;
+    }
+
+    // 将列索引和值绑定为 pair 进行排序
+    std::vector<std::pair<int, double>> row_pairs(row_nnz);
+    for (int i = start; i < end; ++i) {
+      row_pairs[i - start] = std::make_pair(csrColInd[i], csrVal[i]);
+    }
+
+    // 按列索引升序排序
+    std::sort(row_pairs.begin(), row_pairs.end(),
+              [](const std::pair<int, float> &a,
+                 const std::pair<int, float> &b) { return a.first < b.first; });
+
+    // 将排序后的结果写回原始数组
+    for (int i = start; i < end; ++i) {
+      csrColInd[i] = row_pairs[i - start].first;
+      csrVal[i] = row_pairs[i - start].second;
+    }
+  }
+}
+
 class DiagonalMassIntegrator : public mfem::BilinearFormIntegrator {
 private:
   mfem::Coefficient &k; // 空间依赖的系数（可能是一个 GridFunction）
@@ -91,13 +89,11 @@ public:
     elmat.SetSize(dof, dof);
     elmat = 0.0;
 
-    std::cout << "Processing element " << Trans.ElementNo << std::endl;
     // 为每个自由度（边）计算 k 的倒数平均值
     mfem::Vector k_avg(dof); // 存储每个自由度的 k_avg
     k_avg = 0.0;
-    double k_current = k.Eval(Trans, mfem::IntegrationPoint());
-    std::cout << "k_current = " << k_current << std::endl;
     for (int j = 0; j < dof; j++) {
+      double k_current = k.Eval(Trans, mfem::IntegrationPoint());
       k_avg(j) = 1.0 / (2 * k_current); // 转换为 k_avg
     }
 
@@ -204,39 +200,16 @@ public:
   }
 };
 
-double coefficient_func(const mfem::Vector &x) {
-  double x_min = 1.0, x_max = 1.9;
-  int dim = x.Size(); // 获取维度（2 或 3）
-  bool in_region = true;
-
-  // 检查每个维度的坐标是否在 [1/3, 2/3] 内
-  for (int i = 0; i < dim; i++) {
-    if (x[i] < x_min || x[i] > x_max) {
-      in_region = false;
-      break;
-    }
-  }
-
-  return in_region ? 10.0 : 1.0; // 中心区域返回 100，其他返回 1
-}
-
-int main(int argc, char *argv[]) {
+int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
+                    std::vector<int> &col_index, std::vector<double> &values) {
 
   // 1. Parse command-line options.
   const char *mesh_file = "../../data/structured3d.mesh";
   int order = 0;
   const char *device_config = "cpu";
-  mfem::OptionsParser args(argc, argv);
-  args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
-  args.Parse();
-  if (!args.Good()) {
-    args.PrintUsage(std::cout);
-    return 1;
-  }
-  args.PrintOptions(std::cout);
-
   // 2. Enable hardware devices such as GPUs, and programming models such as
   //    CUDA, OCCA, RAJA and OpenMP based on command line options.
+
   mfem::Device device(device_config);
   device.Print();
 
@@ -266,9 +239,10 @@ int main(int argc, char *argv[]) {
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients, analytical solution, and rhs of the PDE.
-  // mfem::ConstantCoefficient k_coeff(1.0);
+  mfem::ConstantCoefficient k(1.0);
 
-  mfem::FunctionCoefficient k_coeff(coefficient_func);
+  // 8. Define the coefficients of the PDE.
+  mfem::GridFunction k_function(W_space);
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -281,7 +255,7 @@ int main(int argc, char *argv[]) {
   mfem::BilinearForm *mVarf(new mfem::BilinearForm(R_space));
   mfem::MixedBilinearForm *bVarf(new mfem::MixedBilinearForm(R_space, W_space));
 
-  mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k_coeff));
+  mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k));
   mVarf->Assemble();
   mVarf->Finalize();
 
@@ -292,9 +266,10 @@ int main(int argc, char *argv[]) {
   bVarf->Finalize();
 
   mfem::SparseMatrix &M(mVarf->SpMat());
-  M.Print(std::cout);
+  mfem::Vector diag;
+  M.GetDiag(diag);
+
   mfem::SparseMatrix &B(bVarf->SpMat());
-  // B.Print(std::cout);
   for (int i = 0; i < boundary_dofs.Size(); i++) {
     B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
   }
@@ -302,8 +277,22 @@ int main(int argc, char *argv[]) {
   mfem::SparseMatrix BT;
   ComputeTranspose(B, BT);
   mfem::SparseMatrix *C = Mult(B, M);
-  mfem::SparseMatrix *FINAL = Mult(*C, BT);
-  // FINAL->Print(std::cout);
+  mfem::SparseMatrix *A = Mult(*C, BT);
+  //   FINAL->Print(std::cout);
+
+  const int *i = A->GetI();            // row pointers
+  const int *j = A->GetJ();            // column indices
+  const double *a_data = A->GetData(); // values
+  *nnz = A->NumNonZeroElems();         // number of non-zero elements
+  *nrows = A->Height();
+  row_ptr.resize(*nrows + 1);
+  col_index.resize(*nnz);
+  values.resize(*nnz);
+  std::copy(i, i + *nrows + 1, row_ptr.begin());
+  std::copy(j, j + *nnz, col_index.begin());
+  std::copy(a_data, a_data + *nnz, values.begin());
+
+  sortCSRRows(*nrows, *nnz, row_ptr.data(), col_index.data(), values.data());
 
   // 17. Free the used memory.
   delete mVarf;
@@ -314,7 +303,7 @@ int main(int argc, char *argv[]) {
   delete hdiv_coll;
   delete mesh;
   delete C;
-  delete FINAL;
+  delete A;
 
   return 0;
 }

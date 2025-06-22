@@ -27,6 +27,8 @@ int readMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
 
 int generateMat(int *nrows, int *nnz, std::vector<int> &row_ptr,
                 std::vector<int> &col_index, std::vector<double> &values);
+int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
+                    std::vector<int> &col_index, std::vector<double> &values);
 
 void matDecompose2LM(int *nrows, int *nnz, std::vector<int> &row_ptr,
                      std::vector<int> &col_index, std::vector<double> &values);

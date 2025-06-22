@@ -60,7 +60,9 @@ int main(int argc, char *argv[]) {
     std::vector<PetscInt> row_ptr(1);
 
     // readMat(&nrows, &nnz, row_ptr, col_indices, values);
-    generateMat(&nrows, &nnz, row_ptr, col_indices, values);
+    // generateMat(&nrows, &nnz, row_ptr, col_indices, values);
+    generateMatMFEM(&nrows, &nnz, row_ptr, col_indices, values);
+    PetscCall(PetscPrintf(PETSC_COMM_SELF, "Matrix generated...\n"));
 
     PetscCall(MatCreateSeqAIJWithArrays(PETSC_COMM_SELF, nrows, nrows,
                                         row_ptr.data(), col_indices.data(),
@@ -68,8 +70,7 @@ int main(int argc, char *argv[]) {
     PetscCall(MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY));
 
-    // PetscCall(MatView(A, PETSC_VIEWER_STDOUT_SELF));
-
+    PetscCall(PetscPrintf(PETSC_COMM_SELF, "Starting partitioning...\n"));
     int ncon = 1;
     int objval;
     int options[METIS_NOPTIONS];
@@ -79,12 +80,12 @@ int main(int argc, char *argv[]) {
     METIS_PartGraphKway(&nrows, &ncon, row_ptr.data(), col_indices.data(), NULL,
                         NULL, NULL, &nprocs, NULL, NULL, NULL, &objval,
                         part.data());
-    std::cout << "Objective for the partition is " << objval << std::endl;
+    PetscCall(PetscPrintf(PETSC_COMM_SELF,
+                          "Partitioning completed with objective value %d\n",
+                          objval));
 
     IS is;
     std::vector<PetscInt> idx(nrows, 0);
-
-    std::cout << std::endl;
     for (int i = 0; i < nrows; ++i) {
       idx[i] = cluster_sizes[part[i]];
       cluster_sizes[part[i]]++;
@@ -191,6 +192,8 @@ int main(int argc, char *argv[]) {
 
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating matrix! \n"));
 
+  // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
+
   PetscCall(PetscLogEventEnd(matGen, 0, 0, 0, 0));
 
   Vec b;
@@ -215,6 +218,7 @@ int main(int argc, char *argv[]) {
   if (using2G) {
     Mat Ai;
     PetscCall(MatGetDiagonalBlock(C, &Ai));
+
     Vec rowsum;
     PetscCall(MatCreateVecs(Ai, &rowsum, NULL));
     PetscCall(VecSetFromOptions(rowsum));
@@ -242,6 +246,16 @@ int main(int argc, char *argv[]) {
     PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
     PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
 
+    // if (rank == 3) {
+    //   PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+    //   PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
+    //   PetscViewer viewer;
+    //   PetscViewerASCIIOpen(PETSC_COMM_SELF, "vector.txt", &viewer);
+
+    //   // 将向量输出到文件
+    //   VecView(diagonal, viewer);
+    // }
+
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,
                            PETSC_DEFAULT, PETSC_DEFAULT, eigennum, NULL, 0,
@@ -260,7 +274,7 @@ int main(int argc, char *argv[]) {
     PetscCall(MatCreateVecs(Ai, &eig_vec, NULL));
     ST st;
     PetscCall(EPSGetST(eps, &st));
-    PetscCall(STSetType(st, STSINVERT));
+    PetscCall(STSetType(st, STSHIFT));
     PetscCall(EPSSetTarget(eps, 1e-12));
     PetscCall(EPSSetWhichEigenpairs(eps, EPS_TARGET_REAL));
     PetscCall(EPSSetOptionsPrefix(eps, "epsl1_"));

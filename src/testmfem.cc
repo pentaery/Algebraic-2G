@@ -205,7 +205,7 @@ public:
 };
 
 double coefficient_func(const mfem::Vector &x) {
-  double x_min = 1.0, x_max = 1.9;
+  double x_min = 0.33, x_max = 0.66;
   int dim = x.Size(); // 获取维度（2 或 3）
   bool in_region = true;
 
@@ -217,7 +217,7 @@ double coefficient_func(const mfem::Vector &x) {
     }
   }
 
-  return in_region ? 10.0 : 1.0; // 中心区域返回 100，其他返回 1
+  return in_region ? 1000.0 : 1.0; // 中心区域返回 100，其他返回 1
 }
 
 int main(int argc, char *argv[]) {

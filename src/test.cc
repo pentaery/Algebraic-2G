@@ -246,15 +246,15 @@ int main(int argc, char *argv[]) {
     PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
     PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
 
-    // if (rank == 3) {
-    //   PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
-    //   PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
-    //   PetscViewer viewer;
-    //   PetscViewerASCIIOpen(PETSC_COMM_SELF, "vector.txt", &viewer);
+    if (rank == 3) {
+      // PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+      // PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
+      PetscViewer viewer;
+      PetscViewerASCIIOpen(PETSC_COMM_SELF, "vector.txt", &viewer);
 
-    //   // 将向量输出到文件
-    //   VecView(diagonal, viewer);
-    // }
+      // 将向量输出到文件
+      VecView(diagonal, viewer);
+    }
 
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,

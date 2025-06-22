@@ -71,11 +71,11 @@ endif (CXX_FLAGS)
 #  this must appear AFTER the compilers are set
 set(SOURCES 
 # ex5.cc
- testmfem.cc
+#  testmfem.cc
 #  tpfa.cc
-# test.cc
+test.cc
 #  matCPU.cc
-#  matMFEM.cc
+ matMFEM.cc
 )
 SET(OUTPUT_NAME test)
 add_executable(${OUTPUT_NAME} ${SOURCES})

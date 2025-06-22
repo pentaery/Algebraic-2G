@@ -3,11 +3,20 @@
 #include "matCPU.hh"
 #include "mfem.hpp"
 
-double k_function(const mfem::Vector &x) {
-  double x_coord = x(0);
-  double y_coord = x(1);
-  // 示例：k 随 x 坐标线性变化
-  return 1.0 + 0.5 * x_coord;
+double coefficient_func(const mfem::Vector &x) {
+  double x_min = 0.33, x_max = 0.66;
+  int dim = x.Size(); // 获取维度（2 或 3）
+  bool in_region = true;
+
+  // 检查每个维度的坐标是否在 [1/3, 2/3] 内
+  for (int i = 0; i < dim; i++) {
+    if (x[i] < x_min || x[i] > x_max) {
+      in_region = false;
+      break;
+    }
+  }
+
+  return in_region ? 1e-3 : 1.0; // 中心区域返回 1e-3，其他返回 1
 }
 
 void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
@@ -238,11 +247,9 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   std::cout << "dim(W) = " << W_space->GetVSize() << "\n";
   std::cout << "***********************************************************\n";
 
-  // 7. Define the coefficients, analytical solution, and rhs of the PDE.
-  mfem::ConstantCoefficient k(1.0);
-
-  // 8. Define the coefficients of the PDE.
-  mfem::GridFunction k_function(W_space);
+  // 7. Define the coefficients of the PDE.
+  mfem::FunctionCoefficient k_coeff(coefficient_func);
+  // mfem::ConstantCoefficient k_coeff(1.0); 
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -255,7 +262,7 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   mfem::BilinearForm *mVarf(new mfem::BilinearForm(R_space));
   mfem::MixedBilinearForm *bVarf(new mfem::MixedBilinearForm(R_space, W_space));
 
-  mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k));
+  mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k_coeff));
   mVarf->Assemble();
   mVarf->Finalize();
 

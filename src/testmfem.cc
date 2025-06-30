@@ -35,12 +35,9 @@
 //
 //               We recommend viewing examples 1-4 before viewing this example.
 
-#include "fem/coefficient.hpp"
-#include "linalg/operator.hpp"
-#include "linalg/sparsemat.hpp"
-#include "linalg/vector.hpp"
 #include "mfem.hpp"
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <type_traits>
@@ -71,6 +68,11 @@ void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
   At.Finalize();
 }
 
+double f_space(const mfem::Vector &x) {
+  return -3 * M_PI * M_PI * cos(M_PI * x(0)) * cos(M_PI * x(1)) *
+         cos(M_PI * x(2));
+}
+
 class DiagonalMassIntegrator : public mfem::BilinearFormIntegrator {
 private:
   mfem::Coefficient &k; // 空间依赖的系数（可能是一个 GridFunction）
@@ -91,12 +93,12 @@ public:
     elmat.SetSize(dof, dof);
     elmat = 0.0;
 
-    std::cout << "Processing element " << Trans.ElementNo << std::endl;
+    // std::cout << "Processing element " << Trans.ElementNo << std::endl;
     // 为每个自由度（边）计算 k 的倒数平均值
     mfem::Vector k_avg(dof); // 存储每个自由度的 k_avg
     k_avg = 0.0;
     double k_current = k.Eval(Trans, mfem::IntegrationPoint());
-    std::cout << "k_current = " << k_current << std::endl;
+    // std::cout << "k_current = " << k_current << std::endl;
     for (int j = 0; j < dof; j++) {
       k_avg(j) = 1.0 / (2 * k_current); // 转换为 k_avg
     }
@@ -223,11 +225,11 @@ double coefficient_func(const mfem::Vector &x) {
 int main(int argc, char *argv[]) {
 
   // 1. Parse command-line options.
-  const char *mesh_file = "../../data/structured3d.mesh";
+  // const char *mesh_file = "../../data/structured3d.mesh";
   int order = 0;
   const char *device_config = "cpu";
   mfem::OptionsParser args(argc, argv);
-  args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+  // args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.Parse();
   if (!args.Good()) {
     args.PrintUsage(std::cout);
@@ -243,8 +245,11 @@ int main(int argc, char *argv[]) {
   // 3. Read the mesh from the given mesh file. We can handle triangular,
   //    quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
   //    the same code.
-  mfem::Mesh *mesh = new mfem::Mesh(mesh_file, 1, 0);
-  int dim = mesh->Dimension();
+  int dim = 3;
+  int nx = 4, ny = 4, nz = 4;
+  double sx = 1.0, sy = 1.0, sz = 1.0;
+  mfem::Mesh *mesh =
+      new mfem::Mesh(nx, ny, nz, mfem::Element::HEXAHEDRON, true, sx, sy, sz);
 
   // 5. Define a finite element space on the mesh. Here we use the
   //    Raviart-Thomas finite elements of the specified order.
@@ -266,9 +271,9 @@ int main(int argc, char *argv[]) {
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients, analytical solution, and rhs of the PDE.
-  // mfem::ConstantCoefficient k_coeff(1.0);
+  mfem::ConstantCoefficient k_coeff(1.0);
 
-  mfem::FunctionCoefficient k_coeff(coefficient_func);
+  // mfem::FunctionCoefficient k_coeff(coefficient_func);
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -281,6 +286,7 @@ int main(int argc, char *argv[]) {
   mfem::BilinearForm *mVarf(new mfem::BilinearForm(R_space));
   mfem::MixedBilinearForm *bVarf(new mfem::MixedBilinearForm(R_space, W_space));
 
+  auto start = std::chrono::high_resolution_clock::now();
   mVarf->AddDomainIntegrator(new DiagonalMassIntegrator(k_coeff));
   mVarf->Assemble();
   mVarf->Finalize();
@@ -290,20 +296,76 @@ int main(int argc, char *argv[]) {
       new CustomRT0P0Integrator(mesh)); // 自定义的 RT0-P0 积分器
   bVarf->Assemble();
   bVarf->Finalize();
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+  std::cout << "Time taken to assemble matrices: " << elapsed.count()
+            << " seconds\n";
 
+  start = std::chrono::high_resolution_clock::now();
   mfem::SparseMatrix &M(mVarf->SpMat());
-  M.Print(std::cout);
+  // M.Print(std::cout);
   mfem::SparseMatrix &B(bVarf->SpMat());
   // B.Print(std::cout);
+  end = std::chrono::high_resolution_clock::now();
+  elapsed = end - start;
+  std::cout << "Time taken to get sparse matrices: " << elapsed.count()
+            << " seconds\n";
+
+  start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < boundary_dofs.Size(); i++) {
-    B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
+    // B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
+    M(boundary_dofs[i], boundary_dofs[i]) = 0.0;
   }
+
+  end = std::chrono::high_resolution_clock::now();
+  elapsed = end - start;
+  std::cout << "Time taken to eliminate boundary dofs: " << elapsed.count()
+            << " seconds\n";
+
+  start = std::chrono::high_resolution_clock::now();
 
   mfem::SparseMatrix BT;
   ComputeTranspose(B, BT);
   mfem::SparseMatrix *C = Mult(B, M);
   mfem::SparseMatrix *FINAL = Mult(*C, BT);
   // FINAL->Print(std::cout);
+
+  end = std::chrono::high_resolution_clock::now();
+  elapsed = end - start;
+  std::cout << "Time taken to compute final matrix: " << elapsed.count()
+            << " seconds\n";
+
+  mfem::FunctionCoefficient f_coeff(f_space);
+
+  // 创建线性形式
+  mfem::LinearForm b(W_space);
+  b.AddDomainIntegrator(new mfem::DomainLFIntegrator(f_coeff));
+  b.Assemble();
+
+  // 输出右端向量（仅用于调试）
+  b.Print(std::cout);
+
+  int maxIter(1000);
+  mfem::real_t rtol(1.e-6);
+  mfem::real_t atol(1.e-10);
+
+  mfem::MINRESSolver solver;
+  solver.SetAbsTol(atol);
+  solver.SetRelTol(rtol);
+  solver.SetMaxIter(maxIter);
+  solver.SetOperator(*FINAL);
+  solver.SetPrintLevel(1);
+
+  // if (solver.GetConverged()) {
+  //   std::cout << "MINRES converged in " << solver.GetNumIterations()
+  //             << " iterations with a residual norm of " <<
+  //             solver.GetFinalNorm()
+  //             << ".\n";
+  // } else {
+  //   std::cout << "MINRES did not converge in " << solver.GetNumIterations()
+  //             << " iterations. Residual norm is " << solver.GetFinalNorm()
+  //             << ".\n";
+  // }
 
   // 17. Free the used memory.
   delete mVarf;

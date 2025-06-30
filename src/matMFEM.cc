@@ -1,22 +1,25 @@
-#include "fem/coefficient.hpp"
-#include "fem/gridfunc.hpp"
+// #include "fem/coefficient.hpp"
+// #include "fem/gridfunc.hpp"
 #include "matCPU.hh"
-#include "mfem.hpp"
+#include <cmath>
+// #include "mfem.hpp"
 
 double coefficient_func(const mfem::Vector &x) {
-  double x_min = 0.33, x_max = 0.66;
+
+  // double x_min = 0.33, x_max = 0.66;
   int dim = x.Size(); // 获取维度（2 或 3）
   bool in_region = true;
+  for (int i = 0; i < dim; ++i) {
+    // if (std::fmod(x[i] * 4, 2) < 1.0) {
+    //   in_region = false;
+    // }
 
-  // 检查每个维度的坐标是否在 [1/3, 2/3] 内
-  for (int i = 0; i < dim; i++) {
-    if (x[i] < x_min || x[i] > x_max) {
+    if ((x[i] > 0.1 && x[i] < 0.2) || (x[i] > 0.3 && x[i] < 0.4) ||
+        (x[i] > 0.6 && x[i] < 0.7) || (x[i] > 0.8 && x[i] < 0.9)) {
       in_region = false;
-      break;
     }
   }
-
-  return in_region ? 1e-3 : 1.0; // 中心区域返回 1e-3，其他返回 1
+  return in_region ? 1e6 : 1.0;
 }
 
 void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
@@ -210,10 +213,11 @@ public:
 };
 
 int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
-                    std::vector<int> &col_index, std::vector<double> &values) {
+                    std::vector<int> &col_index, std::vector<double> &values,
+                    int meshsize = 30) {
 
   // 1. Parse command-line options.
-  const char *mesh_file = "../../data/structured3d.mesh";
+  // const char *mesh_file = "../../data/structured3d.mesh";
   int order = 0;
   const char *device_config = "cpu";
   // 2. Enable hardware devices such as GPUs, and programming models such as
@@ -225,8 +229,14 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   // 3. Read the mesh from the given mesh file. We can handle triangular,
   //    quadrilateral, tetrahedral, hexahedral, surface and volume meshes with
   //    the same code.
-  mfem::Mesh *mesh = new mfem::Mesh(mesh_file, 1, 0);
-  int dim = mesh->Dimension();
+  // mfem::Mesh *mesh = new mfem::Mesh(mesh_file, 1, 0);
+  int dim = 3;
+  double sx = 1.0, sy = 1.0, sz = 1.0;
+  mfem::Mesh *mesh =
+      new mfem::Mesh(meshsize, meshsize, meshsize, mfem::Element::HEXAHEDRON,
+                     true, sx, sy, sz);
+
+  // int dim = mesh->Dimension();
 
   // 5. Define a finite element space on the mesh. Here we use the
   //    Raviart-Thomas finite elements of the specified order.
@@ -248,8 +258,8 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients of the PDE.
-  mfem::FunctionCoefficient k_coeff(coefficient_func);
-  // mfem::ConstantCoefficient k_coeff(1.0); 
+  // mfem::FunctionCoefficient k_coeff(coefficient_func);
+  mfem::ConstantCoefficient k_coeff(1.0);
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -278,7 +288,7 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
 
   mfem::SparseMatrix &B(bVarf->SpMat());
   for (int i = 0; i < boundary_dofs.Size(); i++) {
-    B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
+    M(boundary_dofs[i], boundary_dofs[i]) = 0.0;
   }
 
   mfem::SparseMatrix BT;

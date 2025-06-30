@@ -46,7 +46,7 @@ if (CXX_FLAGS)
 endif (CXX_FLAGS)
 
 # message(STATUS "Looking for mfem ...")
-# set(MFEM_DIR "~/HPCSoft/mfem-4.8" CACHE PATH "Path to the MFEM build or install prefix.")
+# set(MFEM_DIR "~/HPCSoft/mfem" CACHE PATH "Path to the MFEM build or install prefix.")
 # if (MFEM_DIR)
 #    find_package(mfem REQUIRED NAMES MFEM HINTS "${MFEM_DIR}" "${MFEM_DIR}/build" NO_DEFAULT_PATH)
 # else()
@@ -83,7 +83,7 @@ target_include_directories(${OUTPUT_NAME}
   PRIVATE
   ${PROJECT_SOURCE_DIR}/include
   $ENV{HOME}/HPCSoft/METIS/include
-  $ENV{HOME}/HPCSoft/mfem-4.8
+  $ENV{HOME}/HPCSoft/mfem
 )
 
 
@@ -98,7 +98,7 @@ pkg_search_module(SLEPC REQUIRED IMPORTED_TARGET slepc)
 target_link_libraries(${OUTPUT_NAME} PkgConfig::PETSC PkgConfig::SLEPC m)
 target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/METIS/lib/libmetis.so)
 target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/GKlib/lib/libGKlib.a)
-target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/mfem-4.8/libmfem.a)
+target_link_libraries(${OUTPUT_NAME} $ENV{HOME}/HPCSoft/mfem/libmfem.a)
 
 include_directories(${MFEM_INCLUDE_DIRS})
 target_link_libraries(${OUTPUT_NAME} ${MFEM_LIBRARIES})

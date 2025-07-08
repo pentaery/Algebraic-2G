@@ -38,6 +38,7 @@
 #include "mfem.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <type_traits>
@@ -93,6 +94,12 @@ public:
     elmat.SetSize(dof, dof);
     elmat = 0.0;
 
+    mfem::Vector x;
+    Trans.Transform(mfem::IntegrationPoint(), x);
+    std::cout << "Physical coordinates: " << x[0] << ", " << x[1] << ", "
+              << x[2] << std::endl;
+    std::cout << "Coefficient value: "
+              << k.Eval(Trans, mfem::IntegrationPoint()) << std::endl;
     // std::cout << "Processing element " << Trans.ElementNo << std::endl;
     // 为每个自由度（边）计算 k 的倒数平均值
     mfem::Vector k_avg(dof); // 存储每个自由度的 k_avg
@@ -207,19 +214,20 @@ public:
 };
 
 double coefficient_func(const mfem::Vector &x) {
-  double x_min = 0.33, x_max = 0.66;
   int dim = x.Size(); // 获取维度（2 或 3）
-  bool in_region = true;
 
-  // 检查每个维度的坐标是否在 [1/3, 2/3] 内
-  for (int i = 0; i < dim; i++) {
-    if (x[i] < x_min || x[i] > x_max) {
-      in_region = false;
-      break;
+  int count = 0;
+  for (int i = 0; i < dim; ++i) {
+    if (std::fmod(x(i), (double)(2.0 / 4)) < ((double)(1.0 / 4))) {
+      count++;
     }
   }
 
-  return in_region ? 1000.0 : 1.0; // 中心区域返回 100，其他返回 1
+  if (count >= dim - 1) {
+    return 100.0; // 如果在中心区域，则返回 100
+  } else {
+    return 1.0;
+  }
 }
 
 int main(int argc, char *argv[]) {
@@ -248,8 +256,8 @@ int main(int argc, char *argv[]) {
   int dim = 3;
   int nx = 4, ny = 4, nz = 4;
   double sx = 1.0, sy = 1.0, sz = 1.0;
-  mfem::Mesh *mesh =
-      new mfem::Mesh(nx, ny, nz, mfem::Element::HEXAHEDRON, true, sx, sy, sz);
+  mfem::Mesh *mesh = new mfem::Mesh(mfem::Mesh::MakeCartesian3D(
+      nx, ny, nz, mfem::Element::HEXAHEDRON, sx, sy, sz, true));
 
   // 5. Define a finite element space on the mesh. Here we use the
   //    Raviart-Thomas finite elements of the specified order.
@@ -271,9 +279,9 @@ int main(int argc, char *argv[]) {
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients, analytical solution, and rhs of the PDE.
-  mfem::ConstantCoefficient k_coeff(1.0);
+  // mfem::ConstantCoefficient k_coeff(1.0);
 
-  // mfem::FunctionCoefficient k_coeff(coefficient_func);
+  mfem::FunctionCoefficient k_coeff(coefficient_func);
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -313,7 +321,6 @@ int main(int argc, char *argv[]) {
 
   start = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < boundary_dofs.Size(); i++) {
-    // B.EliminateCol(boundary_dofs[i], mfem::Operator::DIAG_ZERO);
     M(boundary_dofs[i], boundary_dofs[i]) = 0.0;
   }
 
@@ -343,7 +350,7 @@ int main(int argc, char *argv[]) {
   b.Assemble();
 
   // 输出右端向量（仅用于调试）
-  b.Print(std::cout);
+  // b.Print(std::cout);
 
   int maxIter(1000);
   mfem::real_t rtol(1.e-6);

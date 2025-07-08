@@ -76,6 +76,7 @@ set(SOURCES
 test.cc
 #  matCPU.cc
  matMFEM.cc
+# partition.cc
 )
 SET(OUTPUT_NAME test)
 add_executable(${OUTPUT_NAME} ${SOURCES})

@@ -2,24 +2,27 @@
 // #include "fem/gridfunc.hpp"
 #include "matCPU.hh"
 #include <cmath>
+#include <petscoptions.h>
 // #include "mfem.hpp"
 
 double coefficient_func(const mfem::Vector &x) {
-
-  // double x_min = 0.33, x_max = 0.66;
-  int dim = x.Size(); // 获取维度（2 或 3）
-  bool in_region = true;
+  int dim = x.Size();              // 获取维度（2 或 3）
+  int partition = 4, contrast = 6; // 分区数
+  PetscCall(PetscOptionsGetInt(NULL, NULL, "-partition", &partition, NULL));
+  PetscCall(PetscOptionsGetInt(NULL, NULL, "-contrast", &contrast, NULL));
+  int count = 0;
   for (int i = 0; i < dim; ++i) {
-    // if (std::fmod(x[i] * 4, 2) < 1.0) {
-    //   in_region = false;
-    // }
-
-    if ((x[i] > 0.1 && x[i] < 0.2) || (x[i] > 0.3 && x[i] < 0.4) ||
-        (x[i] > 0.6 && x[i] < 0.7) || (x[i] > 0.8 && x[i] < 0.9)) {
-      in_region = false;
+    if (std::fmod(x(i), (double)(2.0 / partition)) <
+        ((double)(1.0 / partition))) {
+      count++;
     }
   }
-  return in_region ? 1e6 : 1.0;
+
+  if (count >= dim - 1) {
+    return pow(10, contrast); // 如果在中心区域，则返回 100
+  } else {
+    return 1.0;
+  }
 }
 
 void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
@@ -232,9 +235,9 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   // mfem::Mesh *mesh = new mfem::Mesh(mesh_file, 1, 0);
   int dim = 3;
   double sx = 1.0, sy = 1.0, sz = 1.0;
-  mfem::Mesh *mesh =
-      new mfem::Mesh(meshsize, meshsize, meshsize, mfem::Element::HEXAHEDRON,
-                     true, sx, sy, sz);
+  mfem::Mesh *mesh = new mfem::Mesh(
+      mfem::Mesh::MakeCartesian3D(meshsize, meshsize, meshsize,
+                                  mfem::Element::HEXAHEDRON, sx, sy, sz, true));
 
   // int dim = mesh->Dimension();
 
@@ -258,8 +261,8 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients of the PDE.
-  // mfem::FunctionCoefficient k_coeff(coefficient_func);
-  mfem::ConstantCoefficient k_coeff(1.0);
+  mfem::FunctionCoefficient k_coeff(coefficient_func);
+  // mfem::ConstantCoefficient k_coeff(1.0);
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -295,7 +298,7 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   ComputeTranspose(B, BT);
   mfem::SparseMatrix *C = Mult(B, M);
   mfem::SparseMatrix *A = Mult(*C, BT);
-  //   FINAL->Print(std::cout);
+  // A->Print(std::cout);
 
   const int *i = A->GetI();            // row pointers
   const int *j = A->GetJ();            // column indices
@@ -321,6 +324,7 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   delete mesh;
   delete C;
   delete A;
+  // delete mesh;
 
   return 0;
 }

@@ -1,9 +1,17 @@
 #include "matCPU.hh"
 #include <iostream>
 #include <metis.h>
+#include <petscdevicetypes.h>
+#include <petscerror.h>
+#include <petscis.h>
+#include <petscksp.h>
+#include <petsclogtypes.h>
 #include <petscmat.h>
+#include <petscpctypes.h>
+#include <petscsys.h>
 #include <petscsystypes.h>
 #include <petscvec.h>
+#include <petscviewer.h>
 #include <slepceps.h>
 #include <slepcst.h>
 
@@ -185,13 +193,11 @@ PetscInt main(PetscInt argc, char *argv[]) {
                                       PETSC_DECIDE, PETSC_DECIDE, local_row_ptr,
                                       local_col_index, local_values, &C));
 
-  PetscBool usingHEP = PETSC_TRUE;
-  PetscCall(PetscOptionsGetBool(NULL, NULL, "-usingHEP", &usingHEP, NULL));
+  // PetscCall(MatScale(C, 100000000));
 
-  if (!usingHEP) {
-    PetscCall(MatScale(C, 1000000));
-  }
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating MPI matrix! \n"));
+
+  // PetscCall(MatView(C, PETSC_VIEWER_STDOUT_WORLD));
 
   PetscCall(PetscLogEventEnd(matGen, 0, 0, 0, 0));
 
@@ -209,9 +215,11 @@ PetscInt main(PetscInt argc, char *argv[]) {
       KSPSetTolerances(ksp, 1e-6, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT));
   PetscCall(KSPSetFromOptions(ksp));
 
-  PetscBool using2G = PETSC_FALSE, using3G = PETSC_FALSE;
+  PetscBool using2G = PETSC_FALSE, using3G = PETSC_FALSE,
+            usingHEP = PETSC_FALSE;
   PetscCall(PetscOptionsGetBool(NULL, NULL, "-using2G", &using2G, NULL));
   PetscCall(PetscOptionsGetBool(NULL, NULL, "-using3G", &using3G, NULL));
+  PetscCall(PetscOptionsGetBool(NULL, NULL, "-usingHEP", &usingHEP, NULL));
   PetscInt eigennum = 4;
   PetscCall(PetscOptionsGetInt(NULL, NULL, "-eigennum", &eigennum, NULL));
   PC pc;
@@ -241,7 +249,16 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(MatSetOption(Ai, MAT_SYMMETRIC, PETSC_TRUE));
 
     Mat Si;
+    Mat Aicopy;
     if (usingHEP) {
+      PetscCall(MatDuplicate(Ai, MAT_COPY_VALUES, &Aicopy));
+      PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1,
+                                NULL, &Si));
+      PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
+      PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
+      PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
+      PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
+
       PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving HEP EigenProblem\n"));
       PetscCall(VecReciprocal(diagonal));
       PetscCall(VecSqrtAbs(diagonal));
@@ -254,7 +271,18 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
       PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
       PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
+      // PetscCall(MatScale(Si, 100000));
     }
+
+    // if (rank == 0) {
+    //   // PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+    //   // PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
+    //   PetscViewer viewer;
+    //   PetscViewerASCIIOpen(PETSC_COMM_SELF, "vector.txt", &viewer);
+
+    //   // 将向量输出到文件
+    //   VecView(diagonal, viewer);
+    // }
 
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,
@@ -263,16 +291,22 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(PetscLogEventBegin(EigenSolver, 0, 0, 0, 0));
     EPS eps;
     PetscInt nconv;
-    PetscScalar eig_val;
-    const PetscScalar *arr_eig_vec;
+    PetscScalar eig_val, *arr_eig_vec;
     Vec eig_vec;
     PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
     if (usingHEP) {
       PetscCall(EPSSetOperators(eps, Ai, NULL));
       PetscCall(EPSSetProblemType(eps, EPS_HEP));
+      if (rank == 0) {
+        PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+      }
     } else {
       PetscCall(EPSSetOperators(eps, Ai, Si));
       PetscCall(EPSSetProblemType(eps, EPS_GHEP));
+      if (rank == 0) {
+        PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+        PetscCall(MatView(Si, PETSC_VIEWER_STDOUT_SELF));
+      }
     }
     PetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
     PetscCall(EPSSetTolerances(eps, 1e-6, 1000));
@@ -305,37 +339,53 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
       PetscInt idxn = eigennum * rank + j;
       PetscCall(EPSGetEigenpair(eps, j, &eig_val, NULL, eig_vec, NULL));
+      if (rank == 0) {
+      }
 
+      if (usingHEP) {
+        PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
+        // PetscCall(VecView(eig_vec, PETSC_VIEWER_STDOUT_SELF));
+      }
       // if (usingHEP) {
+      //   Vec res;
+      //   PetscCall(VecDuplicate(eig_vec, &res));
+      //   PetscCall(MatMult(Aicopy, eig_vec, res));
+      //   PetscCall(VecAXPY(res, -eig_val, eig_vec));
+      //   PetscScalar norm;
+      //   PetscCall(VecNorm(res, NORM_2, &norm));
+      //   PetscCall(PetscPrintf(
+      //       PETSC_COMM_SELF,
+      //       "Rank %d, Eiegnvalue %d, Residual norm of the eigenvector: "
+      //       "%.18f\n",
+      //       rank, j, norm));
+
+      // } else {
       //   PetscInt its;
       //   PetscCall(EPSGetIterationNumber(eps, &its));
       //   PetscScalar err;
       //   PetscCall(EPSComputeError(eps, j, EPS_ERROR_ABSOLUTE, &err));
       //   PetscCall(PetscPrintf(
       //       PETSC_COMM_SELF,
-      //       "Rank %d, Eiegnvalue %d, Absolute error of the eigenvalue:
-      //       "
+      //       "Rank %d, Eiegnvalue %d, Absolute error of the eigenvalue: "
       //       "%.18f, iter %d\n",
       //       rank, j, err, its));
       // }
-
-      if (usingHEP) {
-        PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
-      }
-
-      // PetscCall(PetscPrintf(PETSC_COMM_SELF,
-      //                       "Rank %d, number %d, eigval %.18f\n", rank, j,
-      //                       eig_val));
-      PetscCall(VecGetArrayRead(eig_vec, &arr_eig_vec));
+      //   if (rank == 0 && j == 1) {
+      //     PetscCall(VecView(diagonal, PETSC_VIEWER_STDOUT_SELF));
+      //     PetscCall(VecView(eig_vec, PETSC_VIEWER_STDOUT_SELF));
+      //   }
+      PetscCall(PetscPrintf(PETSC_COMM_SELF,
+                            "Rank %d, number %d, eigval %.18f\n", rank, j,
+                            eig_val));
+      PetscCall(VecGetArray(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
-      PetscCall(VecRestoreArrayRead(eig_vec, &arr_eig_vec));
     }
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
 
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
+    PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
@@ -377,228 +427,11 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(
         PCShellSetName(pc, "2levels-MG-via-GMsFEM-with-velocity-elimination"));
 
-  } else if (using3G) {
-    PetscCall(PetscLogEventBegin(MAS, 0, 0, 0, 0));
-
-    Mat Adiagonal, Ai;
-    PetscCall(MatGetDiagonalBlock(C, &Adiagonal));
-    PetscCall(MatDuplicate(Adiagonal, MAT_COPY_VALUES, &Ai));
-
-    const PetscInt *row_Ai;
-    const PetscInt *col_Ai;
-    PetscInt *row_Ai_copy;
-    PetscInt *col_Ai_copy;
-    PetscCall(MatSeqAIJGetCSRAndMemType(Ai, &row_Ai, &col_Ai, NULL, NULL));
-    PetscInt nnz = row_Ai[local_rows];
-    PetscCall(PetscMalloc1(local_rows + 1, &row_Ai_copy));
-    PetscCall(PetscMalloc1(nnz, &col_Ai_copy));
-    PetscCall(PetscArraycpy(row_Ai_copy, row_Ai, local_rows + 1));
-    PetscCall(PetscArraycpy(col_Ai_copy, col_Ai, nnz));
-
-    PetscInt ncon = 1;
-    PetscInt objval;
-    PetscInt options[METIS_NOPTIONS];
-    PetscInt fineparts = 8;
-    PetscCall(PetscOptionsGetInt(NULL, NULL, "-fineparts", &fineparts, NULL));
-    std::vector<PetscInt> part(local_rows);
-    options[METIS_OPTION_OBJTYPE] = METIS_OBJTYPE_VOL;
-    options[METIS_OPTION_NCUTS] = 1;
-    int err = METIS_PartGraphKway(&local_rows, &ncon, row_Ai_copy, col_Ai_copy,
-                                  NULL, NULL, NULL, &fineparts, NULL, NULL,
-                                  NULL, &objval, part.data());
-    if (err != METIS_OK) {
-      PetscCall(PetscPrintf(PETSC_COMM_SELF,
-                            "METIS_PartGraphKway failed with error code %d\n",
-                            err));
-    }
-    PetscCall(PetscFree(row_Ai_copy));
-    PetscCall(PetscFree(col_Ai_copy));
-
-    PetscInt **idx, *count;
-    PetscCall(PetscMalloc1(fineparts, &count));
-    PetscCall(PetscMalloc1(fineparts, &idx));
-    PetscCall(PetscMemzero(count, fineparts * sizeof(PetscInt)));
-    for (int i = 0; i < local_rows; ++i) {
-      count[part[i]]++;
-    }
-    for (int i = 0; i < fineparts; ++i) {
-      PetscCall(PetscMalloc1(count[i], &idx[i]));
-    }
-    PetscCall(PetscMemzero(count, fineparts * sizeof(PetscInt)));
-    for (int i = 0; i < local_rows; ++i) {
-      idx[part[i]][count[part[i]]++] = i;
-    }
-
-    IS *is;
-
-    PetscCall(PetscMalloc1(fineparts, &is));
-    for (int i = 0; i < fineparts; ++i) {
-      PetscCall(ISCreateGeneral(PETSC_COMM_SELF, count[i], idx[i],
-                                PETSC_OWN_POINTER, &is[i]));
-    }
-    Mat *subAi;
-    PetscCall(MatCreateSubMatrices(Ai, fineparts, is, is, MAT_INITIAL_MATRIX,
-                                   &subAi));
-    // for (int i = 0; i < fineparts; ++i) {
-    //   PetscCall(ISDestroy(&is[i]));
-    // }
-    Mat R;
-    PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum * fineparts,
-                           PETSC_DETERMINE, PETSC_DETERMINE, eigennum, NULL, 0,
-                           NULL, &R));
-
-    if (usingHEP) {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving HEP EigenProblem\n"));
-    } else {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving GHEP EigenProblem\n"));
-    }
-    Vec rowsum, diagonal, vdiagonal;
-    Mat Si;
-    for (int i = 0; i < fineparts; ++i) {
-
-      PetscCall(MatCreateVecs(subAi[i], &rowsum, NULL));
-      PetscInt size;
-      PetscCall(VecGetSize(rowsum, &size));
-      PetscCall(MatGetRowSum(subAi[i], rowsum));
-
-      PetscCall(MatCreateVecs(subAi[i], &vdiagonal, NULL));
-      PetscCall(VecDuplicate(vdiagonal, &diagonal));
-      PetscCall(MatGetDiagonal(subAi[i], vdiagonal));
-      PetscCall(VecCopy(vdiagonal, diagonal));
-
-      PetscCall(VecAXPY(diagonal, -1.0, rowsum));
-      PetscCall(MatDiagonalSet(subAi[i], diagonal, INSERT_VALUES));
-      PetscCall(MatAssemblyBegin(subAi[i], MAT_FINAL_ASSEMBLY));
-      PetscCall(MatAssemblyEnd(subAi[i], MAT_FINAL_ASSEMBLY));
-      PetscCall(MatSetOption(subAi[i], MAT_SYMMETRIC, PETSC_TRUE));
-
-      if (usingHEP) {
-        PetscCall(VecReciprocal(diagonal));
-        PetscCall(VecSqrtAbs(diagonal));
-        PetscCall(MatDiagonalScale(subAi[i], diagonal, diagonal));
-      } else {
-        PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1,
-                                  NULL, &Si));
-        PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
-        PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
-        PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
-        PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
-      }
-
-      PetscCall(PetscLogEventBegin(EigenSolver, 0, 0, 0, 0));
-      EPS eps;
-      PetscInt nconv;
-      PetscScalar eig_val;
-      const PetscScalar *arr_eig_vec;
-      Vec eig_vec;
-      PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
-      if (usingHEP) {
-        PetscCall(EPSSetOperators(eps, subAi[i], NULL));
-        PetscCall(EPSSetProblemType(eps, EPS_HEP));
-      } else {
-        PetscCall(EPSSetOperators(eps, subAi[i], Si));
-        PetscCall(EPSSetProblemType(eps, EPS_GHEP));
-      }
-      PetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
-      PetscCall(EPSSetTolerances(eps, 1e-6, 1000));
-      PetscCall(EPSSetTarget(eps, 1e-12));
-      PetscCall(EPSSetWhichEigenpairs(eps, EPS_TARGET_REAL));
-      PetscCall(EPSSetDimensions(eps, eigennum, PETSC_DEFAULT, PETSC_DEFAULT));
-      PetscCall(MatCreateVecs(subAi[i], &eig_vec, NULL));
-      ST st;
-      PetscCall(EPSGetST(eps, &st));
-      PetscCall(STSetType(st, STSINVERT));
-      PetscCall(EPSSetOptionsPrefix(eps, "eps"));
-      PetscCall(EPSSetFromOptions(eps));
-      PetscCall(EPSSolve(eps));
-      PetscCall(EPSGetConverged(eps, &nconv));
-
-      PetscCall(PetscLogEventEnd(EigenSolver, 0, 0, 0, 0));
-
-      PetscCheck(nconv >= eigennum, PETSC_COMM_SELF, PETSC_ERR_USER,
-                 "Not enough converged eigenvalues found!");
-
-      PetscInt row_start;
-      PetscCall(MatGetOwnershipRange(C, &row_start, NULL));
-      for (int j = 0; j < count[i]; ++j) {
-        idx[i][j] += row_start;
-      }
-
-      for (PetscInt j = 0; j < eigennum; ++j) {
-
-        PetscInt idxn = eigennum * fineparts * rank + i * eigennum + j;
-        PetscCall(EPSGetEigenpair(eps, j, &eig_val, NULL, eig_vec, NULL));
-        if (usingHEP) {
-          PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
-        }
-        PetscInt size;
-        PetscCall(VecGetSize(eig_vec, &size));
-        // PetscCall(
-        //     PetscPrintf(PETSC_COMM_SELF,
-        //                 "Rank %d, number %d, eigval %.18f, size %d, count
-        //                 %d\n", rank, j, eig_val, size, count[i]));
-        PetscCall(VecGetArrayRead(eig_vec, &arr_eig_vec));
-        PetscCall(MatSetValues(R, count[i], idx[i], 1, &idxn, arr_eig_vec,
-                               INSERT_VALUES));
-        PetscCall(VecRestoreArrayRead(eig_vec, &arr_eig_vec));
-        if (!usingHEP) {
-          PetscCall(MatDestroy(&Si));
-        }
-      }
-      // PetscCall(VecDestroy(&eig_vec));
-      // PetscCall(EPSDestroy(&eps));
-    }
-    // PetscCall(VecDestroy(&rowsum));
-    // PetscCall(VecDestroy(&diagonal));
-    // PetscCall(VecDestroy(&vdiagonal));
-
-    PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
-    PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
-
-    PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
-
-    PetscCall(MatDestroySubMatrices(fineparts, &subAi));
-    PetscCall(MatDestroy(&Ai));
-
-    KSP kspCoarse, kspSmoother;
-    PC pcCoarse, pcSmoother;
-    // 设置二层multigrid
-    PetscCall(PCSetType(pc, PCMG));
-    PetscCall(PCMGSetLevels(pc, 2, NULL));
-    // 设为V-cycle
-    PetscCall(PCMGSetType(pc, PC_MG_MULTIPLICATIVE));
-    PetscCall(PCMGSetCycleType(pc, PC_MG_CYCLE_V));
-    PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH));
-    // 设置coarse solver
-    PetscCall(PCMGGetCoarseSolve(pc, &kspCoarse));
-    PetscCall(KSPSetType(kspCoarse, KSPPREONLY));
-    PetscCall(KSPGetPC(kspCoarse, &pcCoarse));
-    PetscCall(PCSetType(pcCoarse, PCLU));
-    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERMKL_CPARDISO));
-    PetscCall(KSPSetErrorIfNotConverged(kspCoarse, PETSC_TRUE));
-    // PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
-    PetscCall(KSPSetFromOptions(kspCoarse));
-    // 设置一阶smoother
-    PetscCall(PCMGGetSmoother(pc, 1, &kspSmoother));
-    PetscCall(KSPSetFromOptions(kspSmoother));
-    PetscCall(KSPSetTolerances(kspSmoother, PETSC_DEFAULT, PETSC_DEFAULT,
-                               PETSC_DEFAULT, 1));
-    // PetscCall(KSPMonitorSet(kspSmoother, MyMonitor, NULL, NULL));
-    PetscCall(KSPGetPC(kspSmoother, &pcSmoother));
-    PetscCall(PCSetType(pcSmoother, PCBJACOBI));
-    PetscCall(KSPSetErrorIfNotConverged(kspSmoother, PETSC_TRUE));
-    // 设置Prolongation
-    PetscCall(PCMGSetInterpolation(pc, 1, R));
-    PetscCall(
-        PCShellSetName(pc, "3levels-MG-via-GMsFEM-with-velocity-elimination"));
-  }
-
-  else {
+  } else {
     PetscCall(PCSetType(pc, PCGAMG));
   }
 
-  PetscCall(MatDiagonalSet(C, b, INSERT_VALUES));
+  // PetscCall(MatDiagonalSet(C, b, INSERT_VALUES));
   PetscCall(MatShift(C, 1e-5));
 
   Vec x;
@@ -614,9 +447,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
   PetscCall(KSPGetConvergedReason(ksp, &reason));
   PetscInt num;
   PetscCall(KSPGetIterationNumber(ksp, &num));
-  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-                        "KSP converged with reason %d after %d iterations\n",
-                        reason, num));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Number of iterations: %d\n", num));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Converged reason: %d\n", reason));
 
   PetscCall(MatDestroy(&C));
   PetscCall(VecDestroy(&b));

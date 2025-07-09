@@ -233,13 +233,12 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(VecDuplicate(vdiagonal, &diagonal));
     PetscCall(MatGetDiagonal(Ai, vdiagonal));
     PetscCall(VecCopy(vdiagonal, diagonal));
+    PetscCall(VecDestroy(&vdiagonal));
 
     PetscCall(VecAXPY(diagonal, -1.0, rowsum));
     PetscCall(MatDiagonalSet(Ai, diagonal, INSERT_VALUES));
-    PetscCall(MatAssemblyBegin(Ai, MAT_FINAL_ASSEMBLY));
-    PetscCall(MatAssemblyEnd(Ai, MAT_FINAL_ASSEMBLY));
     PetscCall(MatSetOption(Ai, MAT_SYMMETRIC, PETSC_TRUE));
-
+    PetscCall(VecDestroy(&rowsum));
     Mat Si;
     if (usingHEP) {
       PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving HEP EigenProblem\n"));
@@ -251,8 +250,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1,
                                 NULL, &Si));
       PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
-      PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
-      PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
       PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
     }
 
@@ -293,8 +290,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCheck(nconv >= eigennum, PETSC_COMM_SELF, PETSC_ERR_USER,
                "Not enough converged eigenvalues found!");
 
-    PetscInt row_start, row_end;
-    PetscCall(MatGetOwnershipRange(C, &row_start, &row_end));
+    PetscInt row_start;
+    PetscCall(MatGetOwnershipRange(C, &row_start, NULL));
     PetscInt *idxm;
     PetscCall(PetscMalloc1(local_rows, &idxm));
     for (PetscInt i = 0; i < local_rows; ++i) {
@@ -335,7 +332,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
 
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
+    PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
+
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
@@ -344,6 +342,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscCall(MatDestroy(&Si));
     }
     PetscCall(VecDestroy(&eig_vec));
+
+    PetscCall(EPSDestroy(&eps));
 
     KSP kspCoarse, kspSmoother;
     PC pcCoarse, pcSmoother;
@@ -439,9 +439,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
     Mat *subAi;
     PetscCall(MatCreateSubMatrices(Ai, fineparts, is, is, MAT_INITIAL_MATRIX,
                                    &subAi));
-    // for (int i = 0; i < fineparts; ++i) {
-    //   PetscCall(ISDestroy(&is[i]));
-    // }
+
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum * fineparts,
                            PETSC_DETERMINE, PETSC_DETERMINE, eigennum, NULL, 0,
@@ -467,9 +465,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscCall(VecCopy(vdiagonal, diagonal));
 
       PetscCall(VecAXPY(diagonal, -1.0, rowsum));
+      PetscCall(VecDestroy(&rowsum));
       PetscCall(MatDiagonalSet(subAi[i], diagonal, INSERT_VALUES));
-      PetscCall(MatAssemblyBegin(subAi[i], MAT_FINAL_ASSEMBLY));
-      PetscCall(MatAssemblyEnd(subAi[i], MAT_FINAL_ASSEMBLY));
       PetscCall(MatSetOption(subAi[i], MAT_SYMMETRIC, PETSC_TRUE));
 
       if (usingHEP) {
@@ -477,7 +474,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
         PetscCall(VecSqrtAbs(diagonal));
         PetscCall(MatDiagonalScale(subAi[i], diagonal, diagonal));
       } else {
-        PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1,
+        PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, count[i], count[i], 1,
                                   NULL, &Si));
         PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
         PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
@@ -545,6 +542,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
           PetscCall(MatDestroy(&Si));
         }
       }
+
       // PetscCall(VecDestroy(&eig_vec));
       // PetscCall(EPSDestroy(&eps));
     }
@@ -554,12 +552,22 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
+    for (int i = 0; i < fineparts; ++i) {
+      PetscCall(ISDestroy(&is[i]));
+    }
     // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
+
+
     PetscCall(MatDestroySubMatrices(fineparts, &subAi));
     PetscCall(MatDestroy(&Ai));
+
+    // for (int i = 0; i < fineparts; ++i) {
+    //   PetscCall(PetscFree(idx[i]));
+    // }
+    // PetscCall(PetscFree(count));
 
     KSP kspCoarse, kspSmoother;
     PC pcCoarse, pcSmoother;

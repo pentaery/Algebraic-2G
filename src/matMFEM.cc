@@ -31,7 +31,7 @@ private:
   int n;         // 网格倍数（64*n x 64*n x 64*n）
 
 public:
-  PermeabilityCoefficient(double high_k_ = 6, int n_ = 8)
+  PermeabilityCoefficient(double high_k_ = 6, int n_ = 1)
       : high_k(high_k_), n(n_) {
     PetscOptionsGetReal(NULL, NULL, "-contrast", &high_k, NULL);
     PetscOptionsGetInt(NULL, NULL, "-n", &n, NULL);

@@ -185,12 +185,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
                                       PETSC_DECIDE, PETSC_DECIDE, local_row_ptr,
                                       local_col_index, local_values, &C));
 
-  PetscBool usingHEP = PETSC_TRUE;
-  PetscCall(PetscOptionsGetBool(NULL, NULL, "-usingHEP", &usingHEP, NULL));
-
-  if (!usingHEP) {
-    PetscCall(MatScale(C, 1000000));
-  }
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Finished creating MPI matrix! \n"));
 
   PetscCall(PetscLogEventEnd(matGen, 0, 0, 0, 0));
@@ -239,19 +233,10 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(MatDiagonalSet(Ai, diagonal, INSERT_VALUES));
     PetscCall(MatSetOption(Ai, MAT_SYMMETRIC, PETSC_TRUE));
     PetscCall(VecDestroy(&rowsum));
-    Mat Si;
-    if (usingHEP) {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving HEP EigenProblem\n"));
-      PetscCall(VecReciprocal(diagonal));
-      PetscCall(VecSqrtAbs(diagonal));
-      PetscCall(MatDiagonalScale(Ai, diagonal, diagonal));
-    } else {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving GHEP EigenProblem\n"));
-      PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, local_rows, local_rows, 1,
-                                NULL, &Si));
-      PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
-      PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
-    }
+
+    PetscCall(VecReciprocal(diagonal));
+    PetscCall(VecSqrtAbs(diagonal));
+    PetscCall(MatDiagonalScale(Ai, diagonal, diagonal));
 
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,
@@ -264,13 +249,10 @@ PetscInt main(PetscInt argc, char *argv[]) {
     const PetscScalar *arr_eig_vec;
     Vec eig_vec;
     PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
-    if (usingHEP) {
-      PetscCall(EPSSetOperators(eps, Ai, NULL));
-      PetscCall(EPSSetProblemType(eps, EPS_HEP));
-    } else {
-      PetscCall(EPSSetOperators(eps, Ai, Si));
-      PetscCall(EPSSetProblemType(eps, EPS_GHEP));
-    }
+
+    PetscCall(EPSSetOperators(eps, Ai, NULL));
+    PetscCall(EPSSetProblemType(eps, EPS_HEP));
+
     PetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
     PetscCall(EPSSetTolerances(eps, 1e-6, 1000));
     PetscCall(EPSSetTarget(eps, 1e-12));
@@ -316,13 +298,11 @@ PetscInt main(PetscInt argc, char *argv[]) {
       //       rank, j, err, its));
       // }
 
-      if (usingHEP) {
-        PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
-      }
+      PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
 
-      // PetscCall(PetscPrintf(PETSC_COMM_SELF,
-      //                       "Rank %d, number %d, eigval %.18f\n", rank, j,
-      //                       eig_val));
+      PetscCall(PetscPrintf(PETSC_COMM_SELF,
+                            "Rank %d, number %d, eigval %.18f\n", rank, j,
+                            eig_val));
       PetscCall(VecGetArrayRead(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
@@ -332,14 +312,11 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
 
-    PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
+    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
     PetscCall(MatDestroy(&Ai));
-    if (!usingHEP) {
-      PetscCall(MatDestroy(&Si));
-    }
     PetscCall(VecDestroy(&eig_vec));
 
     PetscCall(EPSDestroy(&eps));
@@ -444,13 +421,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
                            PETSC_DETERMINE, PETSC_DETERMINE, eigennum, NULL, 0,
                            NULL, &R));
 
-    if (usingHEP) {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving HEP EigenProblem\n"));
-    } else {
-      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Solving GHEP EigenProblem\n"));
-    }
     Vec rowsum, diagonal, vdiagonal;
-    Mat Si;
     for (int i = 0; i < fineparts; ++i) {
 
       PetscCall(MatCreateVecs(subAi[i], &rowsum, NULL));
@@ -468,18 +439,9 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscCall(MatDiagonalSet(subAi[i], diagonal, INSERT_VALUES));
       PetscCall(MatSetOption(subAi[i], MAT_SYMMETRIC, PETSC_TRUE));
 
-      if (usingHEP) {
-        PetscCall(VecReciprocal(diagonal));
-        PetscCall(VecSqrtAbs(diagonal));
-        PetscCall(MatDiagonalScale(subAi[i], diagonal, diagonal));
-      } else {
-        PetscCall(
-            MatCreateSeqAIJ(PETSC_COMM_SELF, count[i], count[i], 1, NULL, &Si));
-        PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
-        PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
-        PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
-        PetscCall(MatSetOption(Si, MAT_SYMMETRIC, PETSC_TRUE));
-      }
+      PetscCall(VecReciprocal(diagonal));
+      PetscCall(VecSqrtAbs(diagonal));
+      PetscCall(MatDiagonalScale(subAi[i], diagonal, diagonal));
 
       PetscCall(PetscLogEventBegin(EigenSolver, 0, 0, 0, 0));
       EPS eps;
@@ -488,13 +450,10 @@ PetscInt main(PetscInt argc, char *argv[]) {
       const PetscScalar *arr_eig_vec;
       Vec eig_vec;
       PetscCall(EPSCreate(PETSC_COMM_SELF, &eps));
-      if (usingHEP) {
-        PetscCall(EPSSetOperators(eps, subAi[i], NULL));
-        PetscCall(EPSSetProblemType(eps, EPS_HEP));
-      } else {
-        PetscCall(EPSSetOperators(eps, subAi[i], Si));
-        PetscCall(EPSSetProblemType(eps, EPS_GHEP));
-      }
+
+      PetscCall(EPSSetOperators(eps, subAi[i], NULL));
+      PetscCall(EPSSetProblemType(eps, EPS_HEP));
+
       PetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
       PetscCall(EPSSetTolerances(eps, 1e-6, 1000));
       PetscCall(EPSSetTarget(eps, 1e-12));
@@ -524,9 +483,9 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
         PetscInt idxn = eigennum * fineparts * rank + i * eigennum + j;
         PetscCall(EPSGetEigenpair(eps, j, &eig_val, NULL, eig_vec, NULL));
-        if (usingHEP) {
-          PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
-        }
+
+        PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
+
         PetscInt size;
         PetscCall(VecGetSize(eig_vec, &size));
         // PetscCall(
@@ -537,9 +496,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
         PetscCall(MatSetValues(R, count[i], idx[i], 1, &idxn, arr_eig_vec,
                                INSERT_VALUES));
         PetscCall(VecRestoreArrayRead(eig_vec, &arr_eig_vec));
-        if (!usingHEP) {
-          PetscCall(MatDestroy(&Si));
-        }
       }
 
       // PetscCall(VecDestroy(&eig_vec));

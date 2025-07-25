@@ -7,11 +7,11 @@
 #include <slepceps.h>
 #include <slepcst.h>
 
-// PetscErrorCode MyMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *ctx) {
-//   PetscPrintf(PETSC_COMM_WORLD, "Iteration %d: True Residual Norm %g\n", n,
-//               rnorm);
-//   return 0;
-// }
+PetscErrorCode MyMonitor(KSP ksp, PetscInt n, PetscReal rnorm, void *ctx) {
+  PetscPrintf(PETSC_COMM_WORLD, "Iteration %d: True Residual Norm %g\n", n,
+              rnorm);
+  return 0;
+}
 
 PetscInt main(PetscInt argc, char *argv[]) {
 
@@ -334,7 +334,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
     PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
-
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
     PetscCall(MatDestroy(&Ai));
@@ -474,8 +473,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
         PetscCall(VecSqrtAbs(diagonal));
         PetscCall(MatDiagonalScale(subAi[i], diagonal, diagonal));
       } else {
-        PetscCall(MatCreateSeqAIJ(PETSC_COMM_SELF, count[i], count[i], 1,
-                                  NULL, &Si));
+        PetscCall(
+            MatCreateSeqAIJ(PETSC_COMM_SELF, count[i], count[i], 1, NULL, &Si));
         PetscCall(MatDiagonalSet(Si, diagonal, INSERT_VALUES));
         PetscCall(MatAssemblyBegin(Si, MAT_FINAL_ASSEMBLY));
         PetscCall(MatAssemblyEnd(Si, MAT_FINAL_ASSEMBLY));
@@ -559,8 +558,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
-
-
     PetscCall(MatDestroySubMatrices(fineparts, &subAi));
     PetscCall(MatDestroy(&Ai));
 
@@ -614,7 +611,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
   PetscCall(VecCopy(b, x));
   PetscCall(VecSet(x, 0.0));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Starting to solve...\n"));
-  // PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
+  PetscCall(KSPMonitorSet(ksp, MyMonitor, NULL, NULL));
 
   PetscCall(KSPSolve(ksp, b, x));
   PetscCall(PetscLogEventEnd(LS, 0, 0, 0, 0));

@@ -6,8 +6,8 @@
 // #include "mfem.hpp"
 
 double coefficient_func(const mfem::Vector &x) {
-  int dim = x.Size();              // 获取维度（2 或 3）
-  int partition = 4, contrast = 6; // 分区数
+  int dim = x.Size();
+  int partition = 10, contrast = 6;
   PetscCall(PetscOptionsGetInt(NULL, NULL, "-partition", &partition, NULL));
   PetscCall(PetscOptionsGetInt(NULL, NULL, "-contrast", &contrast, NULL));
   int count = 0;
@@ -19,11 +19,148 @@ double coefficient_func(const mfem::Vector &x) {
   }
 
   if (count >= dim - 1) {
-    return pow(10, contrast); // 如果在中心区域，则返回 100
+    return pow(10, -contrast);
   } else {
     return 1.0;
   }
 }
+
+class PermeabilityCoefficient : public mfem::Coefficient {
+private:
+  double high_k; // 高渗透率值
+  int n;         // 网格倍数（64*n x 64*n x 64*n）
+
+public:
+  PermeabilityCoefficient(double high_k_ = 6, int n_ = 8)
+      : high_k(high_k_), n(n_) {
+    PetscOptionsGetReal(NULL, NULL, "-contrast", &high_k, NULL);
+    PetscOptionsGetInt(NULL, NULL, "-n", &n, NULL);
+  }
+
+  virtual double Eval(mfem::ElementTransformation &T,
+                      const mfem::IntegrationPoint &ip) {
+    // 获取归一化坐标 [0, 1]
+    mfem::Vector x;
+    T.Transform(ip, x);
+    int dim = x.Size(); // 维度（应为 3）
+
+    if (dim != 3) {
+      return 1.0; // 只支持 3D
+    }
+
+    // 将归一化坐标 [0, 1] 映射到索引 [0, 64*n)
+    double idx_x = x(0) * (64.0 * n - 1); // x 坐标对应索引
+    double idx_y = x(1) * (64.0 * n - 1); // y 坐标对应索引
+    double idx_z = x(2) * (64.0 * n - 1); // z 坐标对应索引
+
+    // MATLAB 索引范围转换为 MFEM 归一化坐标范围（从 1:64 映射到 [0, 63] 再到
+    // [0, 64*n-1]） MATLAB 索引 i:j 对应归一化坐标 [(i-1)/63, (j-1)/63] 调整为
+    // n 倍网格：[(i-1)/(63*n), (j-1)/(63*n)]
+    auto in_range = [](double idx, int start, int end, int n) {
+      double start_norm =
+          (start - 1.0) / 63.0; // MATLAB 索引 start 转换为归一化坐标
+      double end_norm = (end - 1.0) / 63.0; // MATLAB 索引 end 转换为归一化坐标
+      double idx_norm = idx / (64.0 * n - 1); // 当前索引转换为归一化坐标
+      return idx_norm >= start_norm && idx_norm <= end_norm;
+    };
+
+    // 检查是否在高渗透率区域
+    if (
+        // Region 1: perm(8:55, 30:33, 27:30)
+        (in_range(idx_x, 8, 55, n) && in_range(idx_y, 30, 33, n) &&
+         in_range(idx_z, 27, 30, n)) ||
+        // Region 2: perm(5:9, 45:48, 10:55)
+        (in_range(idx_x, 5, 9, n) && in_range(idx_y, 45, 48, n) &&
+         in_range(idx_z, 10, 55, n)) ||
+        // Region 3: perm(11:13, 45:48, 10:55)
+        (in_range(idx_x, 11, 13, n) && in_range(idx_y, 45, 48, n) &&
+         in_range(idx_z, 10, 55, n)) ||
+        // Region 4: perm(10:14, 21:26, 20:55)
+        (in_range(idx_x, 10, 14, n) && in_range(idx_y, 21, 26, n) &&
+         in_range(idx_z, 20, 55, n)) ||
+        // Region 5: perm(15:19, 22:28, 40:60)
+        (in_range(idx_x, 15, 19, n) && in_range(idx_y, 22, 28, n) &&
+         in_range(idx_z, 40, 60, n)) ||
+        // Region 6: perm(28:33, 42:47, 44:48)
+        (in_range(idx_x, 28, 33, n) && in_range(idx_y, 42, 47, n) &&
+         in_range(idx_z, 44, 48, n)) ||
+        // Region 7: perm(31:34, 32:37, 44:48)
+        (in_range(idx_x, 31, 34, n) && in_range(idx_y, 32, 37, n) &&
+         in_range(idx_z, 44, 48, n)) ||
+        // Region 8: perm(42:48, 12:17, 42:48)
+        (in_range(idx_x, 42, 48, n) && in_range(idx_y, 12, 17, n) &&
+         in_range(idx_z, 42, 48, n)) ||
+        // Region 9: perm(50:54, 20:25, 44:50)
+        (in_range(idx_x, 50, 54, n) && in_range(idx_y, 20, 25, n) &&
+         in_range(idx_z, 44, 50, n)) ||
+        // Region 10: perm(15:20, 11:15, 20:25)
+        (in_range(idx_x, 15, 20, n) && in_range(idx_y, 11, 15, n) &&
+         in_range(idx_z, 20, 25, n)) ||
+        // Region 11: perm(36:40, 21:25, 20:25)
+        (in_range(idx_x, 36, 40, n) && in_range(idx_y, 21, 25, n) &&
+         in_range(idx_z, 20, 25, n)) ||
+        // Region 12: perm(20:25, 38:43, 25:30)
+        (in_range(idx_x, 20, 25, n) && in_range(idx_y, 38, 43, n) &&
+         in_range(idx_z, 25, 30, n)) ||
+        // Region 13: perm(25:30, 44:49, 25:30)
+        (in_range(idx_x, 25, 30, n) && in_range(idx_y, 44, 49, n) &&
+         in_range(idx_z, 25, 30, n)) ||
+        // Region 14: perm(42:46, 42:50, 25:30)
+        (in_range(idx_x, 42, 46, n) && in_range(idx_y, 42, 50, n) &&
+         in_range(idx_z, 25, 30, n)) ||
+        // Region 15: perm(15:25, 22:28, 8:13)
+        (in_range(idx_x, 15, 25, n) && in_range(idx_y, 22, 28, n) &&
+         in_range(idx_z, 8, 13, n)) ||
+        // Region 16: perm(28:33, 42:47, 9:15)
+        (in_range(idx_x, 28, 33, n) && in_range(idx_y, 42, 47, n) &&
+         in_range(idx_z, 9, 15, n)) ||
+        // Region 17: perm(31:35, 42:45, 11:15)
+        (in_range(idx_x, 31, 35, n) && in_range(idx_y, 42, 45, n) &&
+         in_range(idx_z, 11, 15, n)) ||
+        // Region 18: perm(42:46, 12:17, 18:23)
+        (in_range(idx_x, 42, 46, n) && in_range(idx_y, 12, 17, n) &&
+         in_range(idx_z, 18, 23, n)) ||
+        // Region 19: perm(50:56, 20:25, 26:31)
+        (in_range(idx_x, 50, 56, n) && in_range(idx_y, 20, 25, n) &&
+         in_range(idx_z, 26, 31, n)) ||
+        // Region 20: perm(40:45, 10:50, 45:50)
+        (in_range(idx_x, 40, 45, n) && in_range(idx_y, 10, 50, n) &&
+         in_range(idx_z, 45, 50, n)) ||
+        // Region 21: perm(50:54, 10:50, 52:54)
+        (in_range(idx_x, 50, 54, n) && in_range(idx_y, 10, 50, n) &&
+         in_range(idx_z, 52, 54, n)) ||
+        // Region 22: perm(40:45, 10:60, 15:20)
+        (in_range(idx_x, 40, 45, n) && in_range(idx_y, 10, 60, n) &&
+         in_range(idx_z, 15, 20, n)) ||
+        // Region 23: perm(55:60, 15:55, 11:14)
+        (in_range(idx_x, 55, 60, n) && in_range(idx_y, 15, 55, n) &&
+         in_range(idx_z, 11, 14, n)) ||
+        // Region 24: perm(15:45, 10:50, 11:14)
+        (in_range(idx_x, 15, 45, n) && in_range(idx_y, 10, 50, n) &&
+         in_range(idx_z, 11, 14, n)) ||
+        // Region 25: perm(15:50, 10:15, 30:34)
+        (in_range(idx_x, 15, 50, n) && in_range(idx_y, 10, 15, n) &&
+         in_range(idx_z, 30, 34, n)) ||
+        // Region 26: perm(15:50, 10:15, 50:54)
+        (in_range(idx_x, 15, 50, n) && in_range(idx_y, 10, 15, n) &&
+         in_range(idx_z, 50, 54, n)) ||
+        // Region 27: perm(15:30, 50:55, 10:14)
+        (in_range(idx_x, 15, 30, n) && in_range(idx_y, 50, 55, n) &&
+         in_range(idx_z, 10, 14, n)) ||
+        // Region 28: perm(15:50, 50:55, 10:14)
+        (in_range(idx_x, 15, 50, n) && in_range(idx_y, 50, 55, n) &&
+         in_range(idx_z, 10, 14, n)) ||
+        // Region 29: perm(15:25, 52:56, 50:54)
+        (in_range(idx_x, 15, 25, n) && in_range(idx_y, 52, 56, n) &&
+         in_range(idx_z, 50, 54, n)) ||
+        // Region 30: perm(35:50, 52:56, 50:54)
+        (in_range(idx_x, 35, 50, n) && in_range(idx_y, 52, 56, n) &&
+         in_range(idx_z, 50, 54, n))) {
+      return pow(10, high_k); // 高渗透率区域
+    }
+    return 1.0; // 默认渗透率
+  }
+};
 
 void ComputeTranspose(const mfem::SparseMatrix &A, mfem::SparseMatrix &At) {
   // 获取原始矩阵的维度
@@ -261,8 +398,9 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients of the PDE.
-  mfem::FunctionCoefficient k_coeff(coefficient_func);
+  // mfem::FunctionCoefficient k_coeff(coefficient_func);
   // mfem::ConstantCoefficient k_coeff(1.0);
+  PermeabilityCoefficient k_coeff;
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //
@@ -290,6 +428,9 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   M.GetDiag(diag);
 
   mfem::SparseMatrix &B(bVarf->SpMat());
+  for (int i = 0; i < R_space->GetVSize(); i++) {
+    M(i, i) = 1.0 / M(i, i); // 将 M 的对角线元素取倒数
+  }
   for (int i = 0; i < boundary_dofs.Size(); i++) {
     M(boundary_dofs[i], boundary_dofs[i]) = 0.0;
   }

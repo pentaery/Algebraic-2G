@@ -254,7 +254,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(EPSSetProblemType(eps, EPS_HEP));
 
     PetscCall(EPSSetType(eps, EPSKRYLOVSCHUR));
-    PetscCall(EPSSetTolerances(eps, 1e-6, 1000));
+    PetscCall(EPSSetTolerances(eps, 1e-4, 1000));
     PetscCall(EPSSetTarget(eps, 1e-12));
     PetscCall(EPSSetWhichEigenpairs(eps, EPS_TARGET_REAL));
     PetscCall(EPSSetDimensions(eps, eigennum, PETSC_DEFAULT, PETSC_DEFAULT));
@@ -285,18 +285,14 @@ PetscInt main(PetscInt argc, char *argv[]) {
       PetscInt idxn = eigennum * rank + j;
       PetscCall(EPSGetEigenpair(eps, j, &eig_val, NULL, eig_vec, NULL));
 
-      // if (usingHEP) {
-      //   PetscInt its;
-      //   PetscCall(EPSGetIterationNumber(eps, &its));
-      //   PetscScalar err;
-      //   PetscCall(EPSComputeError(eps, j, EPS_ERROR_ABSOLUTE, &err));
-      //   PetscCall(PetscPrintf(
-      //       PETSC_COMM_SELF,
-      //       "Rank %d, Eiegnvalue %d, Absolute error of the eigenvalue:
-      //       "
-      //       "%.18f, iter %d\n",
-      //       rank, j, err, its));
-      // }
+      // PetscInt its;
+      // PetscCall(EPSGetIterationNumber(eps, &its));
+      // PetscScalar err;
+      // PetscCall(EPSComputeError(eps, j, EPS_ERROR_ABSOLUTE, &err));
+      // PetscCall(PetscPrintf(PETSC_COMM_SELF,
+      //                       "Rank %d, Eiegnvalue %d, Absolute error of the "
+      //                       "eigenvalue:%.18f, iter %d\n",
+      //                       rank, j, err, its));
 
       PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
 
@@ -311,8 +307,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
     PetscCall(MatAssemblyBegin(R, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(R, MAT_FINAL_ASSEMBLY));
-
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 
@@ -510,7 +504,6 @@ PetscInt main(PetscInt argc, char *argv[]) {
     for (int i = 0; i < fineparts; ++i) {
       PetscCall(ISDestroy(&is[i]));
     }
-    // PetscCall(MatView(R, PETSC_VIEWER_STDOUT_WORLD));
 
     PetscCall(PetscLogEventEnd(MAS, 0, 0, 0, 0));
 

@@ -20,7 +20,7 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 
 # set the root location to find PETSc's pkg-config
 # set(ENV{PETSC_DIR} "/home/cqye/petsc")
-# set(ENV{PETSC_ARCH} "linux-oneapi-int64")
+# set(ENV{PETSC_ARCH} "arch-linux-c-debug")
 set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
 set(ENV{PKG_CONFIG_PATH} ${PETSC}/lib/pkgconfig)
 

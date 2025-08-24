@@ -1,9 +1,6 @@
-// #include "fem/coefficient.hpp"
-// #include "fem/gridfunc.hpp"
 #include "matCPU.hh"
 #include <cmath>
 #include <petscoptions.h>
-// #include "mfem.hpp"
 
 double coefficient_func(const mfem::Vector &x) {
   int dim = x.Size();
@@ -27,8 +24,8 @@ double coefficient_func(const mfem::Vector &x) {
 
 class PermeabilityCoefficient : public mfem::Coefficient {
 private:
-  double high_k; // 高渗透率值
-  int n;         // 网格倍数（64*n x 64*n x 64*n）
+  double high_k;
+  int n;
 
 public:
   PermeabilityCoefficient(double high_k_ = 6, int n_ = 1)
@@ -371,12 +368,57 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   //    the same code.
   // mfem::Mesh *mesh = new mfem::Mesh(mesh_file, 1, 0);
   int dim = 3;
+
+  // 先创建均匀网格
   double sx = 1.0, sy = 1.0, sz = 1.0;
   mfem::Mesh *mesh = new mfem::Mesh(
       mfem::Mesh::MakeCartesian3D(meshsize, meshsize, meshsize,
                                   mfem::Element::HEXAHEDRON, sx, sy, sz, true));
 
-  // int dim = mesh->Dimension();
+  // 创建非均匀网格：手动调整x、y、z三个方向的节点坐标
+  // 所有三个方向都使用1/128和3/128交替的元素长度
+  std::vector<double> x_coords, y_coords, z_coords;
+
+  // 生成交替长度的坐标数组（1/128和3/128交替）
+  auto generate_alternating_coords = [](int num_elements) {
+    std::vector<double> coords;
+    coords.push_back(0.0);
+    double current_pos = 0.0;
+    for (int i = 0; i < num_elements; ++i) {
+      // 交替使用1/128和3/128的长度
+      double element_length = (i % 2 == 0) ? (1.0 / 128.0) : (3.0 / 128.0);
+      current_pos += element_length;
+      coords.push_back(current_pos);
+    }
+    // 归一化到[0, 1]
+    double total_length = coords.back();
+    for (auto &coord : coords) {
+      coord /= total_length;
+    }
+    return coords;
+  };
+
+  x_coords = generate_alternating_coords(meshsize);
+  y_coords = generate_alternating_coords(meshsize);
+  z_coords = generate_alternating_coords(meshsize);
+
+  // 调整网格节点坐标
+  for (int i = 0; i < mesh->GetNV(); ++i) {
+    double *vertex = mesh->GetVertex(i);
+    int ix = (int)round(vertex[0] * meshsize); // 获取x方向索引
+    int iy = (int)round(vertex[1] * meshsize); // 获取y方向索引
+    int iz = (int)round(vertex[2] * meshsize); // 获取z方向索引
+
+    if (ix < x_coords.size()) {
+      vertex[0] = x_coords[ix]; // 设置新的x坐标
+    }
+    if (iy < y_coords.size()) {
+      vertex[1] = y_coords[iy]; // 设置新的y坐标
+    }
+    if (iz < z_coords.size()) {
+      vertex[2] = z_coords[iz]; // 设置新的z坐标
+    }
+  }
 
   // 5. Define a finite element space on the mesh. Here we use the
   //    Raviart-Thomas finite elements of the specified order.
@@ -401,6 +443,16 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   // mfem::FunctionCoefficient k_coeff(coefficient_func);
   // mfem::ConstantCoefficient k_coeff(1.0);
   PermeabilityCoefficient k_coeff;
+
+  // 将k_coeff投影到GridFunction，并与网格一起导出到同一个Paraview支持的文件
+  mfem::GridFunction k_gridfunc(W_space);
+  k_gridfunc.ProjectCoefficient(k_coeff);
+  mfem::ParaViewDataCollection dcoll("output", mesh);
+  dcoll.RegisterField("Permeability", &k_gridfunc);
+  dcoll.SetLevelsOfDetail(1);
+  dcoll.SetHighOrderOutput(false);
+  dcoll.SetOwnData(false);
+  dcoll.Save();
 
   // 9. Assemble the finite element matrices for the Darcy operator
   //

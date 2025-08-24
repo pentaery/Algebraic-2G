@@ -1,5 +1,4 @@
 #include "matCPU.hh"
-#include <iostream>
 #include <metis.h>
 #include <petscmat.h>
 #include <petscsystypes.h>
@@ -63,6 +62,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
                                         values.data(), &A));
     PetscCall(MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY));
     PetscCall(MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY));
+
+    // PetscCall(MatView(A, PETSC_VIEWER_STDOUT_SELF));
 
     PetscCall(PetscPrintf(PETSC_COMM_SELF, "Starting partitioning...\n"));
     PetscInt ncon = 1;
@@ -238,6 +239,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(VecSqrtAbs(diagonal));
     PetscCall(MatDiagonalScale(Ai, diagonal, diagonal));
 
+    // PetscCall(MatView(Ai, PETSC_VIEWER_STDOUT_SELF));
+
     Mat R;
     PetscCall(MatCreateAIJ(PETSC_COMM_WORLD, local_rows, eigennum,
                            PETSC_DETERMINE, PETSC_DETERMINE, eigennum, NULL, 0,
@@ -296,9 +299,9 @@ PetscInt main(PetscInt argc, char *argv[]) {
 
       PetscCall(VecPointwiseMult(eig_vec, eig_vec, diagonal));
 
-      PetscCall(PetscPrintf(PETSC_COMM_SELF,
-                            "Rank %d, number %d, eigval %.18f\n", rank, j,
-                            eig_val));
+      // PetscCall(PetscPrintf(PETSC_COMM_SELF,
+      //                       "Rank %d, number %d, eigval %.18f\n", rank, j,
+      //                       eig_val));
       PetscCall(VecGetArrayRead(eig_vec, &arr_eig_vec));
       PetscCall(MatSetValues(R, local_rows, idxm, 1, &idxn, arr_eig_vec,
                              INSERT_VALUES));
@@ -329,7 +332,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(KSPSetType(kspCoarse, KSPPREONLY));
     PetscCall(KSPGetPC(kspCoarse, &pcCoarse));
     PetscCall(PCSetType(pcCoarse, PCLU));
-    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERMKL_CPARDISO));
+    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERSUPERLU_DIST));
     PetscCall(KSPSetErrorIfNotConverged(kspCoarse, PETSC_TRUE));
     // PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
     PetscCall(KSPSetFromOptions(kspCoarse));
@@ -529,7 +532,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
     PetscCall(KSPSetType(kspCoarse, KSPPREONLY));
     PetscCall(KSPGetPC(kspCoarse, &pcCoarse));
     PetscCall(PCSetType(pcCoarse, PCLU));
-    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERMKL_CPARDISO));
+    PetscCall(PCFactorSetMatSolverType(pcCoarse, MATSOLVERSUPERLU_DIST));
     PetscCall(KSPSetErrorIfNotConverged(kspCoarse, PETSC_TRUE));
     // PetscCall(KSPMonitorSet(kspCoarse, MyMonitor, NULL, NULL));
     PetscCall(KSPSetFromOptions(kspCoarse));

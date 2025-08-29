@@ -198,7 +198,7 @@ PetscInt main(PetscInt argc, char *argv[]) {
   KSP ksp;
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ksp));
   PetscCall(KSPSetOperators(ksp, C, C));
-  PetscCall(KSPSetType(ksp, KSPCG));
+  PetscCall(KSPSetType(ksp, KSPGMRES));
   PetscCall(KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED));
   PetscCall(
       KSPSetTolerances(ksp, 1e-6, PETSC_DEFAULT, PETSC_DEFAULT, PETSC_DEFAULT));
@@ -490,8 +490,8 @@ PetscInt main(PetscInt argc, char *argv[]) {
         //                 "Rank %d, number %d, eigval %.18f, size %d, count
         //                 %d\n", rank, j, eig_val, size, count[i]));
         PetscCall(VecGetArrayRead(eig_vec, &arr_eig_vec));
-        PetscCall(MatSetValues(R, count[i], idx[i], 1, &idxn, arr_eig_vec,
-                               INSERT_VALUES));
+        PetscCall(MatSetValuesLocal(R, count[i], idx[i], 1, &idxn, arr_eig_vec,
+                                    INSERT_VALUES));
         PetscCall(VecRestoreArrayRead(eig_vec, &arr_eig_vec));
       }
 

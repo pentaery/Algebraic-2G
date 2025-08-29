@@ -1,27 +1,97 @@
+#include "fem/coefficient.hpp"
 #include "matCPU.hh"
 #include <cmath>
 #include <petscoptions.h>
 
-double coefficient_func(const mfem::Vector &x) {
-  int dim = x.Size();
-  int partition = 10, contrast = 6;
-  PetscCall(PetscOptionsGetInt(NULL, NULL, "-partition", &partition, NULL));
-  PetscCall(PetscOptionsGetInt(NULL, NULL, "-contrast", &contrast, NULL));
-  int count = 0;
-  for (int i = 0; i < dim; ++i) {
-    if (std::fmod(x(i), (double)(2.0 / partition)) <
-        ((double)(1.0 / partition))) {
-      count++;
+class PatternCoefficient : public mfem::Coefficient {
+private:
+  int partition;
+  double contrast;
+
+public:
+  PatternCoefficient(int partition_ = 10, double contrast_ = 6)
+      : partition(partition_), contrast(contrast_) {
+    PetscOptionsGetInt(NULL, NULL, "-partition", &partition, NULL);
+    PetscOptionsGetReal(NULL, NULL, "-contrast", &contrast, NULL);
+  }
+
+  virtual double Eval(mfem::ElementTransformation &T,
+                      const mfem::IntegrationPoint &ip) override {
+    mfem::Vector x;
+    T.Transform(ip, x);
+    int dim = x.Size();
+
+    if (dim != 3) {
+      return 1.0; // 只支持 3D
+    }
+
+    // 创建更复杂的系数分布
+    double x_coord = x(0);
+    double y_coord = x(1);
+    double z_coord = x(2);
+
+    // 方法1: 多层嵌套的周期性结构
+    double scale1 = 8.0;   // 粗尺度
+    double scale2 = 32.0;  // 中尺度
+    double scale3 = 128.0; // 细尺度
+
+    // 在不同尺度上创建周期性模式
+    bool coarse_pattern = (std::fmod(x_coord * scale1, 2.0) < 1.0) &&
+                          (std::fmod(y_coord * scale1, 2.0) < 1.0) &&
+                          (std::fmod(z_coord * scale1, 2.0) < 1.0);
+
+    bool medium_pattern = (std::fmod(x_coord * scale2, 2.0) < 1.0) ||
+                          (std::fmod(y_coord * scale2, 2.0) < 1.0) ||
+                          (std::fmod(z_coord * scale2, 2.0) < 1.0);
+
+    bool fine_pattern = (std::fmod(x_coord * scale3, 2.0) < 0.5) &&
+                        (std::fmod(y_coord * scale3, 2.0) < 0.5) &&
+                        (std::fmod(z_coord * scale3, 2.0) < 0.5);
+
+    // 方法2: 添加不规则的几何形状
+    double center_x = 0.5, center_y = 0.5, center_z = 0.5;
+    double dist_to_center = sqrt((x_coord - center_x) * (x_coord - center_x) +
+                                 (y_coord - center_y) * (y_coord - center_y) +
+                                 (z_coord - center_z) * (z_coord - center_z));
+
+    // 创建环形和条带结构
+    bool ring_pattern = (dist_to_center > 0.2 && dist_to_center < 0.3) ||
+                        (dist_to_center > 0.4 && dist_to_center < 0.45);
+
+    bool diagonal_bands = (std::fmod(x_coord + y_coord + z_coord, 0.1) < 0.05);
+
+    // 方法3: 添加随机性但保持确定性
+    auto pseudo_random = [](double x, double y, double z) -> double {
+      // 使用坐标生成伪随机数（确定性的）
+      double val = sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+      return val - floor(val); // 返回 [0,1) 范围的值
+    };
+
+    double rand_val =
+        pseudo_random(x_coord * 100, y_coord * 100, z_coord * 100);
+    bool random_pattern = rand_val < 0.3; // 30% 的区域为高渗透率
+
+    // 方法4: 创建连通的通道
+    bool horizontal_channels = (std::fmod(y_coord * 16, 1.0) < 0.125) &&
+                               (std::fmod(z_coord * 16, 1.0) < 0.125);
+
+    bool vertical_channels = (std::fmod(x_coord * 16, 1.0) < 0.125) &&
+                             (std::fmod(z_coord * 8, 1.0) < 0.25);
+
+    // 组合所有模式创建复杂的系数分布
+    if (coarse_pattern && medium_pattern) {
+      return pow(10, contrast); // 最高渗透率
+    } else if (fine_pattern || ring_pattern) {
+      return pow(10, contrast * 0.8); // 高渗透率
+    } else if (diagonal_bands || horizontal_channels || vertical_channels) {
+      return pow(10, contrast * 0.6); // 中高渗透率
+    } else if (random_pattern) {
+      return pow(10, contrast * 0.4); // 中等渗透率
+    } else {
+      return 1.0; // 低渗透率
     }
   }
-
-  if (count >= dim - 1) {
-    return pow(10, -contrast);
-  } else {
-    return 1.0;
-  }
-}
-
+};
 class PermeabilityCoefficient : public mfem::Coefficient {
 private:
   double high_k;
@@ -440,9 +510,9 @@ int generateMatMFEM(int *nrows, int *nnz, std::vector<int> &row_ptr,
   std::cout << "***********************************************************\n";
 
   // 7. Define the coefficients of the PDE.
-  // mfem::FunctionCoefficient k_coeff(coefficient_func);
+  PatternCoefficient k_coeff;
   // mfem::ConstantCoefficient k_coeff(1.0);
-  PermeabilityCoefficient k_coeff;
+  // PermeabilityCoefficient k_coeff;
 
   // 将k_coeff投影到GridFunction，并与网格一起导出到同一个Paraview支持的文件
   mfem::GridFunction k_gridfunc(W_space);
